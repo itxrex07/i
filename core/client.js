@@ -376,34 +376,40 @@ export class InstagramClient extends EventEmitter {
    * @returns {Promise<void>}
    * @private
    */
-  async _handleMessage(messageData, eventData) {
-    try {
-      const threadId = eventData.thread?.thread_id || messageData.thread_id;
-      if (!threadId) return;
 
-      // Ensure chat exists
-      let chat = this.cache.chats.get(threadId);
-      if (!chat) {
-        chat = await this.fetchChat(threadId);
-      }
+async _handleMessage(messageData, eventData) {
+  try {
+    const threadId = eventData.thread?.thread_id || messageData.thread_id;
+    if (!threadId) return;
 
-      // Create message object
-      const message = this._createMessage(threadId, messageData);
-      chat.messages.set(message.id, message);
-
-      // Emit events
-      this.emit('messageCreate', message);
-      
-      if (message.fromBot) {
-        this.emit('messageSent', message);
-      } else {
-        this.emit('messageReceived', message);
-      }
-
-    } catch (error) {
-      logger.error('❌ Error handling message:', error.message);
+    // ✅ Ignore non-message updates like "has_seen"
+    if (!messageData.item_type) {
+      console.warn('[DEBUG] Ignored non-message event:', messageData.path || messageData);
+      return;
     }
+
+    // Ensure chat exists
+    let chat = this.cache.chats.get(threadId);
+    if (!chat) {
+      chat = await this.fetchChat(threadId);
+    }
+
+    // Create message object
+    const message = this._createMessage(threadId, messageData);
+    chat.messages.set(message.id, message);
+
+    // Emit events
+    this.emit('messageCreate', message);
+    if (message.fromBot) {
+      this.emit('messageSent', message);
+    } else {
+      this.emit('messageReceived', message);
+    }
+
+  } catch (error) {
+    logger.error('❌ Error handling message:', error.message);
   }
+}
 
   /**
    * Attempt to reconnect
