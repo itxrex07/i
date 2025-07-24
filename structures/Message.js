@@ -4,101 +4,29 @@ import { MessageCollector } from './MessageCollector.js';
  * Represents an Instagram message with enhanced functionality
  */
 export class Message {
-  constructor(client, chatId, data) {
-
-   
-    // 🔍 Add this debug check early
-    if (!data.item_type) {
-      console.warn('[WARN] message item_type is missing. Raw data:', JSON.stringify(data, null, 2));
-    }
-
-    /**
-     * The client that instantiated this message
-     * @type {Client}
-     */
-    this.client = client;
-
-    /**
-     * The message's ID
-     * @type {string}
-     */
-    this.id = data.item_id;
-
-    /**
-     * The chat this message belongs to
-     * @type {string}
-     */
-    this.chatId = chatId;
-
-    /**
-     * Raw message data from Instagram
-     * @type {Object}
-     * @private
-     */
-    this._data = data;
-
-    /**
-     * Message type
-     * @type {string}
-     */
-    this.type = this._determineType(data);
-
-    /**
-     * Message timestamp
-     * @type {Date}
-     */
-    this.timestamp = new Date(parseInt(data.timestamp) / 1000);
-
-    /**
-     * Author's user ID
-     * @type {string}
-     */
-    this.authorId = data.user_id;
-
-    /**
-     * Message content (text)
-     * @type {string|null}
-     */
-    this.content = this._extractContent(data);
-
-    /**
-     * Media data if message contains media
-     * @type {Object|null}
-     */
-    this.mediaData = this._extractMediaData(data);
-
-    /**
-     * Voice data if message is a voice message
-     * @type {Object|null}
-     */
-    this.voiceData = this._extractVoiceData(data);
-
-    /**
-     * Story share data if message is a story share
-     * @type {Object|null}
-     */
-    this.storyData = this._extractStoryData(data);
-
-    /**
-     * Message reactions/likes
-     * @type {Array}
-     */
-    this.reactions = this._extractReactions(data);
-
-    /**
-     * Whether the message was sent by the bot
-     * @type {boolean}
-     */
-    this.fromBot = this.authorId === this.client.user?.id;
-
-    /**
-     * Whether the message is a system message
-     * @type {boolean}
-     */
-    this.system = this.type === 'action_log';
-
-    this._handleSentMessagePromise();
+constructor(client, chatId, data) {
+  console.log('[DEBUG] Message data:', JSON.stringify(data, null, 2));
+  if (!data.item_type) {
+    console.warn('[WARN] message item_type is missing. Raw data:', JSON.stringify(data, null, 2));
   }
+
+  this.client = client;
+  this.id = data.item_id;
+  this.chatId = chatId;
+  this._data = data;
+  this.type = this._determineType(data);
+  this.timestamp = new Date(parseInt(data.timestamp) / 1000);
+  this.authorId = data.user_id;
+  this.content = this._extractContent(data);
+  console.log('[DEBUG] Determined type:', this.type, 'Extracted content:', this.content);
+  this.mediaData = this._extractMediaData(data);
+  this.voiceData = this._extractVoiceData(data);
+  this.storyData = this._extractStoryData(data);
+  this.reactions = this._extractReactions(data);
+  this.fromBot = this.authorId === this.client.user?.id;
+  this.system = this.type === 'action_log';
+  this._handleSentMessagePromise();
+}
 
   /**
    * The chat this message belongs to
@@ -172,46 +100,44 @@ export class Message {
     return this.age < 10000;
   }
 
-  /**
-   * Determine message type from data
-   * @param {Object} data - Raw message data
-   * @returns {string}
-   * @private
-   */
-
+/**
+ * Determine message type from data
+ * @param {Object} data - Raw message data
+ * @returns {string}
+ * @private
+ */
 _determineType(data) {
+  if (!data.item_type) {
+    console.warn('[WARN] Missing item_type. Inferring type from data:', JSON.stringify(data, null, 2));
+    if (data.text || data.message || data.content) return 'text'; // Infer text type if text-like fields exist
+    return 'unknown';
+  }
   if (data.item_type === 'text') return 'text';
-  if (data.item_type === 'link') return 'text';
+  if (data.item_type === 'link') return 'text'; // Treat links as text for content purposes
   if (data.item_type === 'story_share') return 'story_share';
   if (data.item_type === 'animated_media') return 'media';
   if (data.item_type === 'voice_media') return 'voice_media';
   if (data.item_type === 'media') return 'media';
   if (data.item_type === 'like') return 'like';
-  console.warn('[WARN] Unknown or missing item_type:', data);
+  console.warn('[WARN] Unknown item_type:', data.item_type, 'Raw data:', JSON.stringify(data, null, 2));
   return data.item_type || 'unknown';
 }
 
-  /**
-   * Extract text content from message data
-   * @param {Object} data - Raw message data
-   * @returns {string|null}
-   * @private
-   */
+/**
+ * Extract text content from message data
+ * @param {Object} data - Raw message data
+ * @returns {string|null}
+ * @private
+ */
 _extractContent(data) {
-  // ✅ Covers most common scenarios
   if (data.text) return data.text;
-
-  // ✅ Covers link messages (e.g. shared URLs)
   if (data.item_type === 'link' && data.link?.text) return data.link.text;
-
-  // ✅ Covers story shares with captions (some do)
   if (data.item_type === 'story_share' && data.story_share?.text) return data.story_share.text;
-
-  // ✅ Debug fallback
-  console.warn('[WARN] Unhandled message type for text extraction:', data.item_type);
+  if (data.message) return data.message; // Check for 'message' field
+  if (data.content) return data.content; // Check for 'content' field
+  console.warn('[WARN] Unhandled message type for text extraction:', data.item_type, 'Raw data:', JSON.stringify(data, null, 2));
   return null;
 }
-
 
 
 
