@@ -172,11 +172,16 @@ export class Message {
    * @private
    */
   _determineType(data) {
-  if (data.item_type === 'text') return 'text'; // Add this line
+  if (data.item_type === 'text') return 'text';
   if (data.item_type === 'link') return 'text';
+  if (data.item_type === 'story_share') return 'story_share';
   if (data.item_type === 'animated_media') return 'media';
-  return data.item_type;
+  if (data.item_type === 'voice_media') return 'voice_media';
+  if (data.item_type === 'media') return 'media';
+  if (data.item_type === 'like') return 'like';
+  return data.item_type || 'unknown';
 }
+
 
   /**
    * Extract text content from message data
@@ -184,9 +189,18 @@ export class Message {
    * @returns {string|null}
    * @private
    */
-  _extractContent(data) {
-  if (data.item_type === 'text' && data.text) return data.text; // <- critical
+_extractContent(data) {
+  // ✅ Covers most common scenarios
+  if (data.text) return data.text;
+
+  // ✅ Covers link messages (e.g. shared URLs)
   if (data.item_type === 'link' && data.link?.text) return data.link.text;
+
+  // ✅ Covers story shares with captions (some do)
+  if (data.item_type === 'story_share' && data.story_share?.text) return data.story_share.text;
+
+  // ✅ Debug fallback
+  console.warn('[WARN] Unhandled message type for text extraction:', data.item_type);
   return null;
 }
 
