@@ -73,7 +73,7 @@ export class InstagramBot {
       await this.client.login(username, password);
       
       // Load modules
-      await this.moduleManager.loadModules();
+      await this.moduleManager.init()
       
       this.running = true;
       logger.info('✅ Instagram bot is ready and running');
