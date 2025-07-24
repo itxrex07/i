@@ -5,7 +5,7 @@ import path from 'path';
 export class ModuleManager {
   constructor(instagramBot = null) {
     this.modules = [];
-    this.commandRegistry = new Map();
+    this.commandRegistry = new (await import('../structures/Collection.js')).Collection();
     this.instagramBot = instagramBot;
     this.modulesPath = './modules';
   }
@@ -41,18 +41,17 @@ export class ModuleManager {
       let moduleInstance;
       const moduleName = ModuleClass.name;
 
-      if (moduleName === 'CoreModule') {
-        moduleInstance = new ModuleClass(this.instagramBot);
-      } else if (moduleName === 'HelpModule') {
+      if (moduleName === 'HelpModule') {
         moduleInstance = new ModuleClass(this);
       } else {
-        moduleInstance = new ModuleClass();
+        moduleInstance = new ModuleClass(this.instagramBot);
       }
 
       // Set module manager reference
       moduleInstance.moduleManager = this;
       this.modules.push(moduleInstance);
 
+      logger.info(`📦 Loaded module: ${moduleName}`);
     } catch (error) {
       logger.error(`Failed to load ${filename}:`, error.message);
     }
@@ -71,6 +70,8 @@ export class ModuleManager {
         });
       }
     }
+
+    logger.info(`🎯 Registered ${this.commandRegistry.size} commands`);
   }
 
   getCommand(name) {
@@ -91,9 +92,11 @@ export class ModuleManager {
   async processMessage(message) {
     for (const module of this.modules) {
       try {
-        message = await module.process(message);
+        if (module.process) {
+          message = await module.process(message);
+        }
       } catch (error) {
-        // Silent fail for module processing
+        logger.error(`Module ${module.name} process error:`, error.message);
       }
     }
     return message;
@@ -102,10 +105,15 @@ export class ModuleManager {
   async cleanup() {
     for (const module of this.modules) {
       if (module.cleanup) {
-        await module.cleanup();
+        try {
+          await module.cleanup();
+        } catch (error) {
+          logger.error(`Module ${module.name} cleanup error:`, error.message);
+        }
       }
     }
     this.modules = [];
     this.commandRegistry.clear();
+    logger.info('🧹 Cleaned up all modules');
   }
 }

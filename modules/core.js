@@ -1,5 +1,5 @@
 export class CoreModule {
-  constructor(instagramBot) {
+  constructor(instagramBot = null) {
     this.instagramBot = instagramBot;
     this.name = 'core';
     this.description = 'Core bot commands and system information';
@@ -47,6 +47,13 @@ export class CoreModule {
       usage: '.restart',
       adminOnly: true
     };
+
+    this.commands['stats'] = {
+      handler: this.handleStats.bind(this),
+      description: 'Show detailed bot statistics',
+      usage: '.stats',
+      adminOnly: false
+    };
   }
 
   getCommands() {
@@ -55,13 +62,13 @@ export class CoreModule {
 
   async process(message) {
     this.messageCount++;
-    this.addToLogBuffer(`[${new Date().toISOString().split('T')[1].split('.')[0]}] @${message.senderUsername}: ${message.text || '[Media]'}`);
+    this.addToLogBuffer(`[${new Date().toISOString().split('T')[1].split('.')[0]}] @${message.author?.username}: ${message.content || '[Media]'}`);
     return message;
   }
 
   async handlePing(args, message) {
     const start = Date.now();
-    await this.sendReply(message, '🏓 Pong!');
+    const sentMessage = await this.sendReply(message, '🏓 Pong!');
     const ping = Date.now() - start;
     await this.sendReply(message, `⚡ Response time: ${ping}ms`);
   }
@@ -78,6 +85,31 @@ export class CoreModule {
       `💾 Memory: ${memUsage}MB`;
 
     await this.sendReply(message, status);
+  }
+
+  async handleStats(args, message) {
+    const client = this.getClient();
+    const stats = client.getStats();
+    const uptime = this.getUptime();
+    const memUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
+    
+    let response = `📊 **Detailed Bot Statistics**\n\n`;
+    response += `⏱️ Uptime: ${uptime}\n`;
+    response += `💾 Memory: ${memUsage}MB\n`;
+    response += `📨 Messages Processed: ${this.messageCount}\n`;
+    response += `🎯 Commands Executed: ${this.commandCount}\n\n`;
+    
+    response += `🔌 **Client Stats:**\n`;
+    response += `👤 Users Cached: ${stats.client.users}\n`;
+    response += `💬 Chats Cached: ${stats.client.chats}\n`;
+    response += `📝 Messages Cached: ${stats.client.messages}\n`;
+    response += `⏳ Pending Chats: ${stats.client.pendingChats}\n\n`;
+    
+    response += `🛠️ **Modules:**\n`;
+    response += `📦 Loaded Modules: ${stats.modules}\n`;
+    response += `⚡ Available Commands: ${stats.commands}\n`;
+    
+    await this.sendReply(message, response);
   }
 
   async handleServer(args, message) {
@@ -112,7 +144,11 @@ export class CoreModule {
 
   async sendReply(message, text) {
     this.commandCount++;
-    return await this.instagramBot.sendMessage(message.threadId, text);
+    return await this.instagramBot.sendMessage(message.chatId, text);
+  }
+
+  getClient() {
+    return this.instagramBot.client || this.instagramBot;
   }
 
   getUptime() {

@@ -15,10 +15,16 @@ class HyperInsta {
       this.showStartupBanner();
       
       console.log('📱 Connecting to Instagram...');
-      await this.instagramBot.login();
-      console.log('✅ Instagram connected');
       
-      console.log('✅ Modules loaded');
+      const username = process.env.INSTAGRAM_USERNAME || config.instagram.username;
+      const password = process.env.INSTAGRAM_PASSWORD || config.instagram.password;
+      
+      if (!username || !password) {
+        throw new Error('Instagram credentials not provided');
+      }
+      
+      await this.instagramBot.login(username, password);
+      console.log('✅ Instagram connected');
       
       this.showLiveStatus();
       
@@ -42,6 +48,8 @@ class HyperInsta {
 
   showLiveStatus() {
     const uptime = Date.now() - this.startTime;
+    const stats = this.instagramBot.getStats();
+    
     console.clear();
     console.log(`
 ╔══════════════════════════════════════════════════════════════╗
@@ -49,7 +57,8 @@ class HyperInsta {
 ║    🚀 HYPER INSTA - LIVE & OPERATIONAL                     ║
 ║                                                              ║
 ║    ✅ Instagram: Connected & Active                         ║
-║    ❌ Telegram: Disabled                                     ║
+║    📦 Modules: ${stats.modules} loaded                                      ║
+║    ⚡ Commands: ${stats.commands} available                              ║
 ║    ⚡ Startup Time: ${Math.round(uptime)}ms                                  ║
 ║    🕒 Started: ${this.startTime.toLocaleTimeString()}                                ║
 ║                                                              ║

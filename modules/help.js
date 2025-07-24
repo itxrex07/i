@@ -90,7 +90,6 @@ export class HelpModule {
   }
 
   async sendReply(message, text) {
-    const coreModule = this.moduleManager.getModule('core');
-    return await coreModule.instagramBot.sendMessage(message.threadId, text);
+    return await message.reply(text);
   }
 }
