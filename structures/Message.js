@@ -98,7 +98,7 @@ export class Message {
 
     logger.warn('Unhandled message type for text extraction:', data.item_type, 'Raw data:', JSON.stringify(data, null, 2));
     return null;
-  }
+  
 }
 
 
