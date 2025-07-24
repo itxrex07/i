@@ -1,4 +1,3 @@
-
 import { IgApiClient } from 'instagram-private-api';
 import { withRealtime } from 'instagram_mqtt';
 import { EventEmitter } from 'events';
@@ -377,7 +376,6 @@ export class InstagramClient extends EventEmitter {
    * @returns {Promise<void>}
    * @private
    */
-
   async _handleMessage(messageData, eventData) {
     try {
       const threadId = eventData.thread?.thread_id || messageData.thread_id;
