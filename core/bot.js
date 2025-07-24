@@ -10,26 +10,37 @@ export class InstagramBot {
      * @type {InstagramClient}
      */
     this.client = new InstagramClient();
-    
+
     /**
      * Module manager for dynamic module loading
      * @type {ModuleManager}
      */
     this.moduleManager = new ModuleManager(this);
-    
+
     /**
      * Message handler for processing incoming messages
      * @type {MessageHandler}
      */
     this.messageHandler = new MessageHandler(this, this.moduleManager);
-    
+
     /**
      * Whether the bot is running
      * @type {boolean}
      */
     this.running = false;
-    
+
     this._setupEventHandlers();
+  }
+
+  // Add this method to expose the 'on' functionality
+  /**
+   * Register an event listener for the client.
+   * Forwards the call to the internal InstagramClient.
+   * @param {string} event - The name of the event to listen for.
+   * @param {Function} listener - The callback function.
+   */
+  on(event, listener) {
+    this.client.on(event, listener);
   }
 
   /**
@@ -68,13 +79,13 @@ export class InstagramBot {
       const password = process.env.INSTAGRAM_PASSWORD;
 
       logger.info('🔑 Starting Instagram bot login...');
-      
+
       // Login to Instagram
       await this.client.login(username, password);
-      
+
       // Load modules
-      await this.moduleManager.init()
-      
+      await this.moduleManager.init();
+
       this.running = true;
       logger.info('✅ Instagram bot is ready and running');
 
@@ -107,7 +118,7 @@ export class InstagramBot {
   async disconnect() {
     logger.info('🔌 Disconnecting Instagram bot...');
     this.running = false;
-    
+
     try {
       await this.moduleManager.cleanup();
       await this.client.disconnect();
