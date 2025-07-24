@@ -153,4 +153,5 @@ class HyperInsta {
 }
 
 // Start the bot
-const bot = new
+const bot = new HyperInsta();
+bot.start().catch(console.error);
