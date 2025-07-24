@@ -54,7 +54,12 @@ export class MessageCollector extends EventEmitter {
      * Collected messages
      * @type {Collection<string, Message>}
      */
-    this.collected = new (await import('./Collection.js')).Collection();
+    this.collected = null; // initialized in async init()
+async init() {
+  const { Collection } = await import('./Collection.js');
+  this.collected = new Collection();
+}
+
 
     /**
      * Whether the collector has ended
