@@ -23,7 +23,8 @@ export class ModuleManager {
       logger.info(`🔌 Loaded ${this.modules.length} modules`);
 
     } catch (error) {
-      logger.error('Module loading error:', error.message);
+      logger.error('Module loading error:', error.stack || error.message);
+
     }
   }
 
