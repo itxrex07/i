@@ -1,3 +1,4 @@
+
 import { IgApiClient } from 'instagram-private-api';
 import { withRealtime } from 'instagram_mqtt';
 import { EventEmitter } from 'events';
@@ -369,83 +370,44 @@ export class InstagramClient extends EventEmitter {
     }
   }
 
-/**
- * Handle incoming message
- * @param {Object} messageData - Raw message data
- * @param {Object} eventData - Event data
- * @returns {Promise<void>}
- * @private
- */
-async _handleMessage(messageData, eventData) {
-  try {
-    const threadId = eventData.thread?.thread_id || messageData.thread_id;
-    if (!threadId) {
-      logger.warn('[WARN] Missing threadId for message:', messageData.item_id);
-      return;
+  /**
+   * Handle incoming message
+   * @param {Object} messageData - Raw message data
+   * @param {Object} eventData - Event data
+   * @returns {Promise<void>}
+   * @private
+   */
+
+  async _handleMessage(messageData, eventData) {
+    try {
+      const threadId = eventData.thread?.thread_id || messageData.thread_id;
+      if (!threadId) return;
+
+      // Ensure chat exists
+      let chat = this.cache.chats.get(threadId);
+      if (!chat) {
+        chat = await this.fetchChat(threadId);
+      }
+
+      // Create message object
+      const message = this._createMessage(threadId, messageData);
+      chat.messages.set(message.id, message);
+
+      // Emit events
+      this.emit('messageCreate', message);
+      
+      if (message.fromBot) {
+        this.emit('messageSent', message);
+      } else {
+        this.emit('messageReceived', message);
+      }
+
+    } catch (error) {
+      logger.error('❌ Error handling message:', error.message);
     }
-
-    // Ensure chat exists
-    let chat = this.cache.chats.get(threadId);
-    if (!chat) {
-      chat = await this.fetchChat(threadId);
-    }
-
-    // Create message object
-    const message = this._createMessage(threadId, messageData);
-    chat.messages.set(message.id, message);
-
-    // Emit events
-    logger.info('[INFO] Emitting messageCreate for message ID:', message.id, 'Content:', message.content);
-    this.emit('messageCreate', message);
-    
-    if (message.fromBot) {
-      logger.info('[INFO] Emitting messageSent for message ID:', message.id);
-      this.emit('messageSent', message);
-    } else {
-      logger.info('[INFO] Emitting messageReceived for message ID:', message.id);
-      this.emit('messageReceived', message);
-      // Process commands
-      this._handleCommand(message);
-    }
-
-    // Clean up old message IDs
-    if (this._processedMessageIds.size > 10000) {
-      this._processedMessageIds.clear();
-    }
-
-  } catch (error) {
-    logger.error('❌ Error handling message:', error.message);
-  }
-}
-
-/**
- * Handle commands from messages
- * @param {Message} message - The message to process
- * @private
- */
-_handleCommand(message) {
-  if (!message.hasText || message.fromBot) {
-    logger.info('[INFO] Skipping command: no text or from bot, Content:', message.content);
-    return;
   }
 
-  const prefix = '.';
-  if (!message.content.startsWith(prefix)) {
-    logger.info('[INFO] No command prefix in message:', message.content);
-    return;
-  }
 
-  const commandName = message.content.slice(prefix.length).split(/\s+/)[0].toLowerCase();
-  logger.info('[INFO] Detected command:', commandName);
-
-  if (commandName === 'ping') {
-    message.reply('Pong!').then(() => {
-      logger.info('[INFO] Responded to .ping command');
-    }).catch(error => {
-      logger.error('[ERROR] Failed to respond to .ping:', error.message);
-    });
-  }
-}
   /**
    * Attempt to reconnect
    * @private
