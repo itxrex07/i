@@ -5,11 +5,10 @@ import path from 'path';
 export class ModuleManager {
   constructor(instagramBot = null) {
     this.modules = [];
-    this.commandRegistry = new (await import('../structures/Collection.js')).Collection();
+    this.commandRegistry = null; // will be initialized in init()
     this.instagramBot = instagramBot;
     this.modulesPath = './modules';
   }
-
   async loadModules() {
     try {
       const moduleFiles = fs.readdirSync(this.modulesPath)
@@ -101,6 +100,11 @@ export class ModuleManager {
     }
     return message;
   }
+async init() {
+  const { Collection } = await import('../structures/Collection.js');
+  this.commandRegistry = new Collection();
+  await this.loadModules();
+}
 
   async cleanup() {
     for (const module of this.modules) {
