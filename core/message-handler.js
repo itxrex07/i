@@ -14,7 +14,7 @@ export class MessageHandler {
       message = await this.moduleManager.processMessage(message);
 
       // Handle commands INSTANTLY
-      if (message.text?.startsWith('.')) {
+      if (message.content?.startsWith('.')) {
         await this.handleCommand(message);
         return;
       }
