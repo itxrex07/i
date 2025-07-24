@@ -98,8 +98,15 @@ export class Message {
 
     logger.warn('Unhandled message type for text extraction:', data.item_type, 'Raw data:', JSON.stringify(data, null, 2));
     return null;
-  
-}
+  }
+
+  /**
+   * Get text content (alias for content)
+   * @returns {string|null}
+   */
+  get text() {
+    return this.content;
+  }
 
 
 
