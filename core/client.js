@@ -98,20 +98,28 @@ export class InstagramClient extends EventEmitter {
       
       this.ig.state.generateDevice(username);
 
-      // Try to load cookies first
+      // Try to load session first, then cookies, then fresh login
       try {
-        await this._loadCookies();
+        await this._loadSession();
         await this.ig.account.currentUser();
-        logger.info('✅ Logged in using saved cookies');
-      } catch (error) {
-        if (!password) {
-          throw new Error('❌ Password required for fresh login');
+        logger.info('✅ Logged in using saved session');
+      } catch (sessionError) {
+        logger.debug('Session login failed, trying cookies...');
+        try {
+          await this._loadCookies();
+          await this.ig.account.currentUser();
+          logger.info('✅ Logged in using saved cookies');
+        } catch (cookieError) {
+          if (!password) {
+            throw new Error('❌ Password required for fresh login. Session and cookies failed.');
+          }
+          
+          logger.info('🔑 Attempting fresh login...');
+          await this.ig.account.login(username, password);
+          await this._saveSession();
+          await this._saveCookies();
+          logger.info('✅ Fresh login successful');
         }
-        
-        logger.info('🔑 Attempting fresh login...');
-        await this.ig.account.login(username, password);
-        await this._saveCookies();
-        logger.info('✅ Fresh login successful');
       }
 
       // Get user info
@@ -451,6 +459,92 @@ export class InstagramClient extends EventEmitter {
       }
     }
     this._eventsToReplay = [];
+  }
+
+  /**
+   * Load session from file
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _loadSession() {
+    const sessionPath = this.options.sessionPath;
+    
+    if (!fs.existsSync(sessionPath)) {
+      throw new Error('No session found');
+    }
+
+    const sessionData = JSON.parse(fs.readFileSync(sessionPath, 'utf-8'));
+    
+    // Restore device settings
+    if (sessionData.device) {
+      this.ig.state.deviceString = sessionData.device.deviceString;
+      this.ig.state.deviceId = sessionData.device.deviceId;
+      this.ig.state.uuid = sessionData.device.uuid;
+      this.ig.state.phoneId = sessionData.device.phoneId;
+      this.ig.state.adid = sessionData.device.adid;
+      this.ig.state.build = sessionData.device.build;
+    }
+
+    // Restore cookies
+    if (sessionData.cookies) {
+      for (const cookie of sessionData.cookies) {
+        const toughCookie = new tough.Cookie({
+          key: cookie.name,
+          value: cookie.value,
+          domain: cookie.domain.replace(/^\./, ''),
+          path: cookie.path || '/',
+          secure: cookie.secure !== false,
+          httpOnly: cookie.httpOnly !== false
+        });
+
+        await this.ig.state.cookieJar.setCookie(
+          toughCookie.toString(),
+          `https://${toughCookie.domain}${toughCookie.path}`
+        );
+      }
+    }
+
+    logger.info(`📁 Loaded session with ${sessionData.cookies?.length || 0} cookies`);
+  }
+
+  /**
+   * Save complete session to file
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _saveSession() {
+    const sessionPath = this.options.sessionPath;
+    const cookies = await this.ig.state.cookieJar.getCookies('https://instagram.com');
+    
+    const sessionData = {
+      device: {
+        deviceString: this.ig.state.deviceString,
+        deviceId: this.ig.state.deviceId,
+        uuid: this.ig.state.uuid,
+        phoneId: this.ig.state.phoneId,
+        adid: this.ig.state.adid,
+        build: this.ig.state.build
+      },
+      cookies: cookies.map(cookie => ({
+        name: cookie.key,
+        value: cookie.value,
+        domain: cookie.domain,
+        path: cookie.path,
+        secure: cookie.secure,
+        httpOnly: cookie.httpOnly
+      })),
+      timestamp: Date.now(),
+      username: this.user?.username
+    };
+
+    // Ensure directory exists
+    const dir = require('path').dirname(sessionPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    fs.writeFileSync(sessionPath, JSON.stringify(sessionData, null, 2));
+    logger.info(`💾 Saved complete session with ${sessionData.cookies.length} cookies`);
   }
 
   /**
