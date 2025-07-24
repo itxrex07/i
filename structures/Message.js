@@ -178,25 +178,18 @@ export class Message {
    * @returns {string}
    * @private
    */
+
 _determineType(data) {
-  const type = data.item_type;
-
-  if (type === 'text' || type === 'link') return 'text';
-  if (type === 'story_share') return 'story_share';
-  if (type === 'animated_media') return 'media';
-  if (type === 'media') return 'media';
-  if (type === 'voice_media') return 'voice_media';
-  if (type === 'like') return 'like';
-
-  // If item_type is missing, fallback based on fields
-  if (typeof data.text === 'string') return 'text';
-  if (data.story_share) return 'story_share';
-  if (data.animated_media || data.media) return 'media';
-
+  if (data.item_type === 'text') return 'text';
+  if (data.item_type === 'link') return 'text';
+  if (data.item_type === 'story_share') return 'story_share';
+  if (data.item_type === 'animated_media') return 'media';
+  if (data.item_type === 'voice_media') return 'voice_media';
+  if (data.item_type === 'media') return 'media';
+  if (data.item_type === 'like') return 'like';
   console.warn('[WARN] Unknown or missing item_type:', data);
-  return 'unknown';
+  return data.item_type || 'unknown';
 }
-
 
   /**
    * Extract text content from message data
