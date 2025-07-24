@@ -55,10 +55,6 @@ export class MessageCollector extends EventEmitter {
      * @type {Collection<string, Message>}
      */
     this.collected = null; // initialized in async init()
-async init() {
-  const { Collection } = await import('./Collection.js');
-  this.collected = new Collection();
-}
 
 
     /**
@@ -157,6 +153,10 @@ async init() {
       this.removeAllListeners();
     }
   }
+async init() {
+  const { Collection } = await import('./Collection.js');
+  this.collected = new Collection();
+}
 
   /**
    * Get the next message that passes the filter
