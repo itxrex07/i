@@ -1,3 +1,5 @@
+// bridge.js
+
 import { logger } from '../utils/utils.js';
 import { config } from '../config.js';
 
@@ -528,36 +530,42 @@ ${message.storyData.isExpired ? '⏰ Story expired' : '✅ Story active'}
         
         await instagramChat.sendPhoto(buffer, telegramMessage.caption); // Send as photo
         deliveryStatus = '✅🎭'; // Animation delivered
-      } else if (telegramMessage.document) {
+      } else if (telegramMessage.document) { // Corrected: This is now correctly chained
         await this.forwardDocumentToInstagram(instagramChat, telegramMessage);
-          return;
-        }
-        
-        await instagramChat.sendMessage(telegramMessage.text);
-      } else if (telegramMessage.photo) {
-        const photo = telegramMessage.photo[telegramMessage.photo.length - 1];
-        const file = await this.telegramBot.bot.getFile(photo.file_id);
-        const fileUrl = `https://api.telegram.org/file/bot${config.telegram.botToken}/${file.file_path}`;
-        
-        await instagramChat.sendPhoto(fileUrl);
-      } else if (telegramMessage.voice) {
-        const file = await this.telegramBot.bot.getFile(telegramMessage.voice.file_id);
-        const fileUrl = `https://api.telegram.org/file/bot${config.telegram.botToken}/${file.file_path}`;
-        
-        // Download and convert voice message
-        const response = await fetch(fileUrl);
-        const buffer = await response.buffer();
-        
-        await instagramChat.sendVoice(buffer);
-      } else if (telegramMessage.document) {
-        // Handle document forwarding
-        await this.forwardDocumentToInstagram(instagramChat, telegramMessage);
-      } else if (telegramMessage.sticker) {
-        // Handle sticker forwarding
+        deliveryStatus = '✅📄'; // Document delivered
+      } else if (telegramMessage.sticker) { // Corrected: This is now correctly chained
         await this.forwardStickerToInstagram(instagramChat, telegramMessage);
+        deliveryStatus = '✅⭐'; // Sticker delivered
+      } else { // Fallback for unhandled message types
+          logger.warn(`⚠️ Unhandled Telegram message type: ${Object.keys(telegramMessage).filter(key => key !== 'from' && key !== 'chat' && key !== 'message_id' && key !== 'date' && key !== 'message_thread_id').join(', ')}`);
+          deliveryStatus = '⚠️'; // Unhandled
       }
+      
+      // Update the status message after sending the content
+      if (statusMessage) {
+        await this.telegramBot.bot.editMessageText(
+          deliveryStatus,
+          {
+            chat_id: statusMessage.chat.id,
+            message_id: statusMessage.message_id,
+            message_thread_id: statusMessage.message_thread_id // Make sure thread ID is preserved
+          }
+        );
+      }
+
     } catch (error) {
       logger.error('❌ Failed to send to Instagram:', error.message);
+      // Update status to error
+      if (statusMessage) {
+        await this.telegramBot.bot.editMessageText(
+          '❌',
+          {
+            chat_id: statusMessage.chat.id,
+            message_id: statusMessage.message_id,
+            message_thread_id: statusMessage.message_thread_id // Make sure thread ID is preserved
+          }
+        );
+      }
     }
   }
 
