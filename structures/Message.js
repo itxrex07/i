@@ -5,6 +5,13 @@ import { MessageCollector } from './MessageCollector.js';
  */
 export class Message {
   constructor(client, chatId, data) {
+
+   
+    // 🔍 Add this debug check early
+    if (!data.item_type) {
+      console.warn('[WARN] message item_type is missing. Raw data:', JSON.stringify(data, null, 2));
+    }
+
     /**
      * The client that instantiated this message
      * @type {Client}
@@ -198,9 +205,17 @@ _determineType(data) {
    * @private
    */
 _extractContent(data) {
-  if (typeof data.text === 'string') return data.text;
-  if (data.link?.text) return data.link.text;
-  if (data.story_share?.text) return data.story_share.text;
+  // ✅ Covers most common scenarios
+  if (data.text) return data.text;
+
+  // ✅ Covers link messages (e.g. shared URLs)
+  if (data.item_type === 'link' && data.link?.text) return data.link.text;
+
+  // ✅ Covers story shares with captions (some do)
+  if (data.item_type === 'story_share' && data.story_share?.text) return data.story_share.text;
+
+  // ✅ Debug fallback
+  console.warn('[WARN] Unhandled message type for text extraction:', data.item_type);
   return null;
 }
 
