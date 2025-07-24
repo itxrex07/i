@@ -4,6 +4,8 @@ import { TelegramBridge } from './telegram/bridge.js';
 import { logger } from './utils/utils.js';
 import { config } from './config.js';
 
+console.clear();
+
 class HyperInsta {
   constructor() {
     this.startTime = new Date();
@@ -15,21 +17,21 @@ class HyperInsta {
   async initialize() {
     try {
       this.showStartupBanner();
-      
-      // Initialize Telegram bot first (works independently)
+
+      // Start Telegram bot first
       console.log('🤖 Initializing Telegram bot...');
       const telegramInitialized = await this.telegramBot.initialize();
-      
+
       if (telegramInitialized) {
         console.log('✅ Telegram bot ready');
         this.telegramBot.instagramBot = this.instagramBot;
       }
-      
+
       console.log('📱 Connecting to Instagram...');
-      
+
       const username = process.env.INSTAGRAM_USERNAME || config.instagram.username;
       const password = process.env.INSTAGRAM_PASSWORD || config.instagram.password;
-      
+
       if (!username || !password) {
         console.log('⚠️ Instagram credentials not provided, running in Telegram-only mode');
         if (telegramInitialized) {
@@ -39,27 +41,27 @@ class HyperInsta {
           throw new Error('Neither Instagram nor Telegram could be initialized');
         }
       }
-      
+
       await this.instagramBot.login(username, password);
       console.log('✅ Instagram connected');
-      
+
       // Initialize bridge if both bots are ready
       if (telegramInitialized && config.telegram.bridgeGroupId) {
         console.log('🌉 Initializing Telegram bridge...');
         this.bridge = new TelegramBridge(this.telegramBot, this.instagramBot);
         const bridgeInitialized = await this.bridge.initialize();
-        
+
         if (bridgeInitialized) {
           console.log('✅ Telegram bridge ready');
         }
       }
-      
+
       this.showLiveStatus();
-      
+
     } catch (error) {
       console.log(`❌ Instagram startup failed: ${error.message}`);
-      
-      // If Telegram is working, continue in Telegram-only mode
+
+      // Continue in Telegram-only mode if available
       if (this.telegramBot.isInitialized) {
         console.log('🤖 Continuing in Telegram-only mode...');
         this.showTelegramOnlyStatus();
@@ -70,12 +72,24 @@ class HyperInsta {
     }
   }
 
+  showStartupBanner() {
+    console.log(`
+╔══════════════════════════════════════════════════════════════╗
+║                                                              ║
+║    🚀 HYPER INSTA - INITIALIZING                           ║
+║                                                              ║
+║    ⚡ Ultra Fast • 🔌 Modular • 🛡️ Robust                  ║
+║                                                              ║
+╚══════════════════════════════════════════════════════════════╝
+    `);
+  }
+
   showLiveStatus() {
     const uptime = Date.now() - this.startTime;
     const stats = this.instagramBot.getStats();
     const telegramStatus = this.telegramBot.isInitialized ? 'Connected & Active' : 'Disconnected';
     const bridgeStatus = this.bridge?.enabled ? 'Active' : 'Inactive';
-    
+
     console.clear();
     console.log(`
 ╔══════════════════════════════════════════════════════════════╗
@@ -102,7 +116,7 @@ class HyperInsta {
 
   showTelegramOnlyStatus() {
     const uptime = Date.now() - this.startTime;
-    
+
     console.clear();
     console.log(`
 ╔══════════════════════════════════════════════════════════════╗
@@ -126,16 +140,17 @@ class HyperInsta {
 
   async start() {
     await this.initialize();
-    
+
     process.on('SIGINT', async () => {
       console.log('\n🛑 Shutting down gracefully...');
-      
       if (this.instagramBot.ready) {
         await this.instagramBot.disconnect();
       }
-      
       console.log('✅ Hyper Insta stopped');
       process.exit(0);
     });
   }
 }
+
+// Start the bot
+const bot = new
