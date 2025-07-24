@@ -11,7 +11,9 @@ export const config = {
   telegram: {
     botToken: '7580382614:AAH30PW6TFmgRzbC7HUXIHQ35GpndbJOIEI',
     chatId: '-1002710686896',
-    enabled: false,
+    bridgeGroupId: '-1001234567890',
+    enabled: true,
+    adminPassword: '1122',   
     forwardMessages: true,
     forwardMedia: true
   },
