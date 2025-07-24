@@ -1,10 +1,13 @@
 {
-  "name": "lavanstax",
-  "version": "0.0.1",
-  "description": "Lavanstax project - Makes it easy and fun to use İnstagram. Also first userbot for İnstagram",
-  "main": "bot.js",
+{
+  "name": "hyper-insta",
+  "version": "1.0.0",
+  "description": "Hyper Insta - Advanced Instagram Bot with Telegram integration and modular system",
+  "main": "index.js",
+  "type": "module",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node index.js",
+    "dev": "node --watch index.js"
   },
   "dependencies": {
     "@androz2091/insta.js": "^1.6.1",
