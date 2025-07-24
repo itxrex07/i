@@ -1,13 +1,13 @@
-import { logger } from '../utils/utils.js';
 import fs from 'fs';
 import path from 'path';
+import { logger } from '../utils/utils.js';
 
 export class ModuleManager {
   constructor(instagramBot = null) {
-    this.modules = [];
-    this.commandRegistry = null; // will be set in init()
     this.instagramBot = instagramBot;
     this.modulesPath = './modules';
+    this.modules = [];
+    this.commandRegistry = null; // set in init()
   }
 
   async init() {
@@ -23,54 +23,54 @@ export class ModuleManager {
         .sort();
 
       for (const file of moduleFiles) {
-        await this.loadModule(file);
+        try {
+          await this.loadModule(file);
+        } catch (modErr) {
+          logger.error(`❌ Module loading failed for ${file}: ${modErr.stack || modErr.message}`);
+        }
       }
 
       this.buildCommandRegistry();
       logger.info(`🔌 Loaded ${this.modules.length} modules`);
 
     } catch (error) {
-      logger.error('Module loading error:', error.message);
+      logger.error('❌ Failed to load modules directory:', error.stack || error.message);
     }
   }
 
   async loadModule(filename) {
-    try {
-      const modulePath = path.join(this.modulesPath, filename);
-      const moduleImport = await import(`../${modulePath}`);
-      const ModuleClass = Object.values(moduleImport)[0];
+    const modulePath = path.join(this.modulesPath, filename);
+    const moduleImport = await import(`../${modulePath}`);
+    const ModuleClass = Object.values(moduleImport)[0];
 
-      if (!ModuleClass || typeof ModuleClass !== 'function') {
-        throw new Error(`No valid module class in ${filename}`);
-      }
-
-      let moduleInstance;
-      const moduleName = ModuleClass.name;
-
-      if (moduleName === 'HelpModule') {
-        moduleInstance = new ModuleClass(this);
-      } else {
-        moduleInstance = new ModuleClass(this.instagramBot);
-      }
-
-      moduleInstance.moduleManager = this;
-      this.modules.push(moduleInstance);
-
-      logger.info(`📦 Loaded module: ${moduleName}`);
-    } catch (error) {
-      logger.error(`Failed to load ${filename}:`, error.message);
+    if (!ModuleClass || typeof ModuleClass !== 'function') {
+      throw new Error(`No valid module class found in ${filename}`);
     }
+
+    const moduleName = ModuleClass.name;
+    const instance = (moduleName === 'HelpModule')
+      ? new ModuleClass(this) // HelpModule receives ModuleManager
+      : new ModuleClass(this.instagramBot);
+
+    instance.moduleManager = this;
+    this.modules.push(instance);
+    logger.info(`📦 Loaded module: ${moduleName}`);
   }
 
   buildCommandRegistry() {
+    if (!this.commandRegistry) {
+      logger.warn('⚠️  Command registry not initialized. Skipping command registration.');
+      return;
+    }
+
     this.commandRegistry.clear();
 
     for (const module of this.modules) {
-      const commands = module.getCommands();
+      const commands = module.getCommands?.() || {};
       for (const [name, command] of Object.entries(commands)) {
         this.commandRegistry.set(name.toLowerCase(), {
           ...command,
-          module: module,
+          module,
           moduleName: module.name || module.constructor.name.replace('Module', '').toLowerCase()
         });
       }
@@ -80,11 +80,11 @@ export class ModuleManager {
   }
 
   getCommand(name) {
-    return this.commandRegistry.get(name.toLowerCase());
+    return this.commandRegistry?.get(name.toLowerCase());
   }
 
   getAllCommands() {
-    return this.commandRegistry;
+    return this.commandRegistry || new Map();
   }
 
   getModule(name) {
@@ -97,11 +97,11 @@ export class ModuleManager {
   async processMessage(message) {
     for (const module of this.modules) {
       try {
-        if (module.process) {
+        if (typeof module.process === 'function') {
           message = await module.process(message);
         }
       } catch (error) {
-        logger.error(`Module ${module.name} process error:`, error.message);
+        logger.error(`❌ Error in module ${module.name} process():`, error.stack || error.message);
       }
     }
     return message;
@@ -109,16 +109,20 @@ export class ModuleManager {
 
   async cleanup() {
     for (const module of this.modules) {
-      if (module.cleanup) {
+      if (typeof module.cleanup === 'function') {
         try {
           await module.cleanup();
         } catch (error) {
-          logger.error(`Module ${module.name} cleanup error:`, error.message);
+          logger.error(`❌ Error in module ${module.name} cleanup():`, error.stack || error.message);
         }
       }
     }
+
     this.modules = [];
-    this.commandRegistry.clear();
+    if (this.commandRegistry) {
+      this.commandRegistry.clear();
+    }
+
     logger.info('🧹 Cleaned up all modules');
   }
 }
