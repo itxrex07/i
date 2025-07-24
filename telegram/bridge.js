@@ -222,56 +222,139 @@ ${message.storyData.isExpired ? '⏰ Story expired' : '✅ Story active'}
   }
 
   async formatInstagramMessage(message) {
-    let formatted = '';
-
-    // Add sender info
     const sender = message.author;
-    if (sender) {
-      formatted += `👤 **${sender.fullName || sender.username}** (@${sender.username})\n`;
-    }
+    const senderName = sender ? (sender.fullName || sender.username) : 'Unknown';
+    const senderUsername = sender ? sender.username : 'unknown';
+    
+    // Create header similar to WhatsApp bridge style
+    let formatted = `📱 **Instagram** | 👤 **${senderName}** (@${senderUsername})\n`;
+    formatted += `🕒 ${message.timestamp.toLocaleString()}\n`;
+    formatted += `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n`;
 
-    // Add message content based on type
+    // Format content based on message type
     switch (message.type) {
       case 'text':
-        formatted += message.content;
+      case 'link':
+        formatted += `💬 ${message.content || 'Empty message'}`;
         break;
         
       case 'media':
-        if (message.mediaData) {
-          formatted += `📸 **${message.mediaData.type.toUpperCase()}**`;
-          if (message.content) {
-            formatted += `\n${message.content}`;
-          }
+        const mediaType = message.mediaData?.type || 'media';
+        const mediaEmoji = mediaType === 'photo' ? '📸' : '🎥';
+        formatted += `${mediaEmoji} **${mediaType.toUpperCase()}**`;
+        if (message.content) {
+          formatted += `\n📝 Caption: ${message.content}`;
+        }
+        if (message.mediaData?.duration) {
+          formatted += `\n⏱️ Duration: ${Math.round(message.mediaData.duration)}s`;
+        }
+        break;
+        
+      case 'disappearing_media':
+        formatted += `👻 **DISAPPEARING ${message.mediaData?.type?.toUpperCase() || 'MEDIA'}**`;
+        if (message.mediaData?.viewMode) {
+          formatted += ` (${message.mediaData.viewMode})`;
+        }
+        if (message.content) {
+          formatted += `\n📝 Caption: ${message.content}`;
         }
         break;
         
       case 'voice_media':
-        formatted += `🎤 **Voice Message**`;
-        if (message.voiceData) {
-          formatted += ` (${Math.round(message.voiceData.duration)}s)`;
+        const duration = message.voiceData?.duration ? Math.round(message.voiceData.duration) : 0;
+        formatted += `🎤 **Voice Message** (${duration}s)`;
+        break;
+        
+      case 'animated_media':
+        const animType = message.mediaData?.isSticker ? 'Sticker' : 'GIF';
+        formatted += `🎭 **${animType}**`;
+        if (message.mediaData?.duration) {
+          formatted += ` (${Math.round(message.mediaData.duration)}s)`;
         }
         break;
         
       case 'story_share':
         formatted += `📖 **Story Share**`;
-        if (message.content) {
-          formatted += `\n${message.content}`;
+        if (message.storyData?.author) {
+          formatted += ` from @${message.storyData.author.username}`;
         }
+        if (message.storyData?.isExpired) {
+          formatted += ` ⚠️ (Expired)`;
+        }
+        if (message.content) {
+          formatted += `\n💬 ${message.content}`;
+        }
+        break;
+        
+      case 'reel_share':
+        formatted += `🎬 **Reel Share**`;
+        if (message.content) {
+          formatted += `\n💬 ${message.content}`;
+        }
+        break;
+        
+      case 'media_share':
+        formatted += `🔄 **Media Share**`;
+        if (message.content) {
+          formatted += `\n💬 ${message.content}`;
+        }
+        break;
+        
+      case 'felix_share':
+        formatted += `📺 **IGTV Share**`;
+        if (message.content) {
+          formatted += `\n💬 ${message.content}`;
+        }
+        break;
+        
+      case 'clip':
+        formatted += `🎞️ **Clip Share**`;
+        if (message.content) {
+          formatted += `\n💬 ${message.content}`;
+        }
+        break;
+        
+      case 'call':
+        formatted += `📞 **${message.content}**`;
         break;
         
       case 'like':
         formatted += `❤️ **Liked a message**`;
         break;
         
+      case 'location_share':
+        formatted += `📍 **Location Share**\n${message.content}`;
+        break;
+        
+      case 'profile_share':
+        formatted += `👤 **Profile Share**\n${message.content}`;
+        break;
+        
+      case 'action_log':
+        formatted += `ℹ️ **${message.content}**`;
+        break;
+        
+      case 'placeholder':
+        formatted += `⚠️ **Message not available**\n${message.content}`;
+        break;
+        
       default:
-        formatted += `📄 **${message.type}**`;
+        formatted += `📄 **${message.type.toUpperCase()}**`;
         if (message.content) {
-          formatted += `\n${message.content}`;
+          formatted += `\n💬 ${message.content}`;
         }
     }
 
-    // Add timestamp
-    formatted += `\n\n🕒 ${message.timestamp.toLocaleString()}`;
+    // Add reactions if any
+    if (message.reactions && message.reactions.length > 0) {
+      formatted += `\n\n❤️ ${message.reactions.length} reaction(s)`;
+    }
+
+    // Add mentions if any
+    const mentions = message.getMentions();
+    if (mentions.length > 0) {
+      formatted += `\n👥 Mentions: ${mentions.map(m => `@${m}`).join(', ')}`;
+    }
 
     return formatted;
   }
@@ -298,9 +381,28 @@ ${message.storyData.isExpired ? '⏰ Story expired' : '✅ Story active'}
         await this.forwardVoiceToTelegram(topicId, originalMessage);
       }
 
+      // Send delivery confirmation emoji like WhatsApp bridge
+      await this.telegramBot.bot.sendMessage(
+        this.bridgeGroupId,
+        '✅',
+        {
+          message_thread_id: topicId,
+          reply_to_message_id: sentMessage.message_id
+        }
+      );
       return sentMessage;
     } catch (error) {
       logger.error('❌ Failed to send to Telegram topic:', error.message);
+      // Send error emoji
+      try {
+        await this.telegramBot.bot.sendMessage(
+          this.bridgeGroupId,
+          '❌',
+          { message_thread_id: topicId }
+        );
+      } catch (e) {
+        logger.error('Failed to send error emoji:', e.message);
+      }
     }
   }
 
@@ -361,11 +463,73 @@ ${message.storyData.isExpired ? '⏰ Story expired' : '✅ Story active'}
 
   async sendToInstagram(instagramChat, telegramMessage) {
     try {
+      let deliveryStatus = '⏳'; // Pending
+      let statusMessage;
+      
+      // Send status message first
+      try {
+        statusMessage = await this.telegramBot.bot.sendMessage(
+          this.bridgeGroupId,
+          deliveryStatus,
+          {
+            message_thread_id: telegramMessage.message_thread_id,
+            reply_to_message_id: telegramMessage.message_id
+          }
+        );
+      } catch (e) {
+        logger.warn('Failed to send status message:', e.message);
+      }
+
       // Handle different message types
       if (telegramMessage.text) {
         // Handle commands from Telegram
         if (telegramMessage.text.startsWith('.')) {
           await this.handleTelegramCommand(instagramChat, telegramMessage);
+          deliveryStatus = '🔧'; // Command executed
+        } else {
+          await instagramChat.sendMessage(telegramMessage.text);
+          deliveryStatus = '✅'; // Delivered
+        }
+      } else if (telegramMessage.photo) {
+        const photo = telegramMessage.photo[telegramMessage.photo.length - 1];
+        const file = await this.telegramBot.bot.getFile(photo.file_id);
+        const fileUrl = `https://api.telegram.org/file/bot${config.telegram.botToken}/${file.file_path}`;
+        
+        // Download and send photo
+        const response = await fetch(fileUrl);
+        const buffer = await response.buffer();
+        
+        await instagramChat.sendPhoto(buffer, telegramMessage.caption);
+        deliveryStatus = '✅📸'; // Photo delivered
+      } else if (telegramMessage.video) {
+        const file = await this.telegramBot.bot.getFile(telegramMessage.video.file_id);
+        const fileUrl = `https://api.telegram.org/file/bot${config.telegram.botToken}/${file.file_path}`;
+        
+        const response = await fetch(fileUrl);
+        const buffer = await response.buffer();
+        
+        await instagramChat.sendVideo(buffer, telegramMessage.caption);
+        deliveryStatus = '✅🎥'; // Video delivered
+      } else if (telegramMessage.voice) {
+        const file = await this.telegramBot.bot.getFile(telegramMessage.voice.file_id);
+        const fileUrl = `https://api.telegram.org/file/bot${config.telegram.botToken}/${file.file_path}`;
+        
+        const response = await fetch(fileUrl);
+        const buffer = await response.buffer();
+        
+        await instagramChat.sendVoice(buffer);
+        deliveryStatus = '✅🎤'; // Voice delivered
+      } else if (telegramMessage.animation) {
+        const file = await this.telegramBot.bot.getFile(telegramMessage.animation.file_id);
+        const fileUrl = `https://api.telegram.org/file/bot${config.telegram.botToken}/${file.file_path}`;
+        
+        const response = await fetch(fileUrl);
+        const buffer = await response.buffer();
+        
+        await instagramChat.sendPhoto(buffer, telegramMessage.caption); // Send as photo
+        deliveryStatus = '✅🎭'; // Animation delivered
+      } else if (telegramMessage.document) {
+        await this.forwardDocumentToInstagram(instagramChat, telegramMessage);
           return;
         }
         
