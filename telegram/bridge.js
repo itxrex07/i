@@ -70,9 +70,63 @@ export class TelegramBridge {
       // Send to Telegram topic
       await this.sendToTelegramTopic(topicId, formattedMessage, instagramMessage);
       
+      // Handle special message types
+      await this.handleSpecialMessageTypes(topicId, instagramMessage);
+      
       logger.debug(`📤 Forwarded Instagram message to Telegram topic ${topicId}`);
     } catch (error) {
       logger.error('❌ Failed to forward to Telegram:', error.message);
+    }
+  }
+
+  async handleSpecialMessageTypes(topicId, message) {
+    try {
+      // Handle story shares
+      if (message.isStoryShare && message.storyData) {
+        const storyInfo = `
+📖 **Story Share**
+👤 From: @${message.storyData.author.username}
+${message.storyData.isExpired ? '⏰ Story expired' : '✅ Story active'}
+        `;
+        
+        await this.telegramBot.bot.sendMessage(
+          this.bridgeGroupId,
+          storyInfo,
+          { message_thread_id: topicId, parse_mode: 'Markdown' }
+        );
+        
+        if (message.storyData.url && !message.storyData.isExpired) {
+          await this.telegramBot.bot.sendPhoto(
+            this.bridgeGroupId,
+            message.storyData.url,
+            { message_thread_id: topicId, caption: '📖 Shared Story' }
+          );
+        }
+      }
+
+      // Handle reactions/likes
+      if (message.reactions && message.reactions.length > 0) {
+        const reactionInfo = `❤️ ${message.reactions.length} reaction(s)`;
+        await this.telegramBot.bot.sendMessage(
+          this.bridgeGroupId,
+          reactionInfo,
+          { message_thread_id: topicId }
+        );
+      }
+
+      // Handle mentions
+      const mentions = message.getMentions();
+      if (mentions.length > 0) {
+        const mentionInfo = `👥 Mentions: ${mentions.map(m => `@${m}`).join(', ')}`;
+        await this.telegramBot.bot.sendMessage(
+          this.bridgeGroupId,
+          mentionInfo,
+          { message_thread_id: topicId }
+        );
+      }
+
+    } catch (error) {
+      logger.error('❌ Failed to handle special message types:', error.message);
     }
   }
 
@@ -309,6 +363,12 @@ export class TelegramBridge {
     try {
       // Handle different message types
       if (telegramMessage.text) {
+        // Handle commands from Telegram
+        if (telegramMessage.text.startsWith('.')) {
+          await this.handleTelegramCommand(instagramChat, telegramMessage);
+          return;
+        }
+        
         await instagramChat.sendMessage(telegramMessage.text);
       } else if (telegramMessage.photo) {
         const photo = telegramMessage.photo[telegramMessage.photo.length - 1];
@@ -326,11 +386,86 @@ export class TelegramBridge {
         
         await instagramChat.sendVoice(buffer);
       } else if (telegramMessage.document) {
-        // Handle document forwarding if needed
-        logger.info('📄 Document forwarding not implemented yet');
+        // Handle document forwarding
+        await this.forwardDocumentToInstagram(instagramChat, telegramMessage);
+      } else if (telegramMessage.sticker) {
+        // Handle sticker forwarding
+        await this.forwardStickerToInstagram(instagramChat, telegramMessage);
       }
     } catch (error) {
       logger.error('❌ Failed to send to Instagram:', error.message);
+    }
+  }
+
+  async handleTelegramCommand(instagramChat, telegramMessage) {
+    try {
+      const command = telegramMessage.text.slice(1);
+      
+      // Special bridge commands
+      if (command === 'typing') {
+        await instagramChat.startTyping({ duration: 5000 });
+        await this.telegramBot.bot.sendMessage(
+          this.bridgeGroupId,
+          '⌨️ Started typing in Instagram chat',
+          { message_thread_id: telegramMessage.message_thread_id }
+        );
+      } else if (command === 'chatinfo') {
+        const info = `
+📊 **Instagram Chat Info**
+• ID: \`${instagramChat.id}\`
+• Type: ${instagramChat.isGroup ? 'Group' : 'DM'}
+• Users: ${instagramChat.users.size}
+• Messages: ${instagramChat.messages.size}
+        `;
+        
+        await this.telegramBot.bot.sendMessage(
+          this.bridgeGroupId,
+          info,
+          { 
+            message_thread_id: telegramMessage.message_thread_id,
+            parse_mode: 'Markdown'
+          }
+        );
+      } else {
+        // Forward other commands to Instagram
+        await instagramChat.sendMessage(telegramMessage.text);
+      }
+      
+    } catch (error) {
+      logger.error('❌ Failed to handle Telegram command:', error.message);
+    }
+  }
+
+  async forwardDocumentToInstagram(instagramChat, telegramMessage) {
+    try {
+      const document = telegramMessage.document;
+      const file = await this.telegramBot.bot.getFile(document.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${config.telegram.botToken}/${file.file_path}`;
+      
+      // Check if it's an image document
+      if (document.mime_type?.startsWith('image/')) {
+        await instagramChat.sendPhoto(fileUrl);
+      } else {
+        // Send as text with file info
+        await instagramChat.sendMessage(`📄 Document: ${document.file_name} (${document.file_size} bytes)`);
+      }
+      
+    } catch (error) {
+      logger.error('❌ Failed to forward document:', error.message);
+    }
+  }
+
+  async forwardStickerToInstagram(instagramChat, telegramMessage) {
+    try {
+      const sticker = telegramMessage.sticker;
+      const file = await this.telegramBot.bot.getFile(sticker.file_id);
+      const fileUrl = `https://api.telegram.org/file/bot${config.telegram.botToken}/${file.file_path}`;
+      
+      // Convert sticker to image and send
+      await instagramChat.sendPhoto(fileUrl);
+      
+    } catch (error) {
+      logger.error('❌ Failed to forward sticker:', error.message);
     }
   }
 
