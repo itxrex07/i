@@ -92,59 +92,93 @@ export class InstagramClient extends EventEmitter {
    * @param {string} password - Instagram password
    * @returns {Promise<void>}
    */
-  async login(username, password) {
-    try {
-      logger.info('🔑 Logging into Instagram...');
-      
-      this.ig.state.generateDevice(username);
+const fs = require('fs');
 
-      // Try to load cookies first
-      try {
-        await this._loadCookies();
-        await this.ig.account.currentUser();
-        logger.info('✅ Logged in using saved cookies');
-      } catch (error) {
-        if (!password) {
-          throw new Error('❌ Password required for fresh login');
-        }
-        
-        logger.info('🔑 Attempting fresh login...');
-        await this.ig.account.login(username, password);
-        await this._saveCookies();
-        logger.info('✅ Fresh login successful');
-      }
+async login(username) {
+  try {
+    logger.info('🔐 Starting login process...');
 
-      // Get user info
-      const userInfo = await this.ig.account.currentUser();
-      this.user = this._patchOrCreateUser(userInfo.pk, userInfo);
-      
-      // Load existing chats
-      await this._loadChats();
+    // Step 1: Generate device
+    this.ig.state.generateDevice(username);
 
-      // Setup realtime handlers
-      this._setupRealtimeHandlers();
+    // Step 2: Try loading session.json first
+    if (fs.existsSync('./session.json')) {
+      logger.info('📂 Found session.json, trying to login from session...');
+      const sessionData = JSON.parse(fs.readFileSync('./session.json', 'utf-8'));
+      await this.ig.state.deserialize(sessionData);
 
-      // Connect to realtime
-      await this.ig.realtime.connect({
-        autoReconnect: this.options.autoReconnect,
-        irisData: await this.ig.feed.directInbox().request()
-      });
+      // Validate session
+      await this.ig.account.currentUser();
+      logger.info('✅ Logged in from session.json');
+    } else {
+      // Step 3: Try cookies.json if session not available
+      logger.info('📂 session.json not found, trying cookies.json...');
+      await this._loadCookies();
 
-      this.ready = true;
-      this.running = true;
-      this._retryCount = 0;
+      // Validate cookies
+      await this.ig.account.currentUser();
+      logger.info('✅ Logged in using cookies.json');
 
-      logger.info(`✅ Connected as @${this.user.username} (ID: ${this.user.id})`);
-      this.emit('ready');
-
-      // Replay queued events
-      this._replayEvents();
-
-    } catch (error) {
-      logger.error('❌ Login failed:', error.message);
-      throw error;
+      // Save session for future use
+      await this._saveSession();
+      logger.info('💾 session.json saved from cookie-based login');
     }
+
+    // Step 4: Load user info
+    const userInfo = await this.ig.account.currentUser();
+    this.user = this._patchOrCreateUser(userInfo.pk, userInfo);
+
+    // Step 5: Load chats
+    await this._loadChats();
+
+    // Step 6: Setup handlers
+    this._setupRealtimeHandlers();
+
+    // Step 7: Connect realtime
+    await this.ig.realtime.connect({
+      autoReconnect: this.options.autoReconnect,
+      irisData: await this.ig.feed.directInbox().request()
+    });
+
+    this.ready = true;
+    this.running = true;
+    this._retryCount = 0;
+
+    logger.info(`🚀 Connected as @${this.user.username} (ID: ${this.user.id})`);
+    this.emit('ready');
+
+    // Step 8: Replay any queued events
+    this._replayEvents();
+
+  } catch (error) {
+    logger.error('❌ Login failed:', error.message);
+    throw new Error('🚫 Could not login via session or cookies');
   }
+}
+
+/**
+ * Save full session state (cookies + device)
+ * @returns {Promise<void>}
+ */
+async _saveSession() {
+  const state = await this.ig.state.serialize();
+  delete state.constants;
+  fs.writeFileSync('./session.json', JSON.stringify(state, null, 2));
+}
+
+/**
+ * Load full session state
+ * @returns {Promise<void>}
+ */
+async _loadSession() {
+  if (!fs.existsSync(this.options.sessionPath)) {
+    throw new Error('No session file found');
+  }
+
+  const stateData = JSON.parse(fs.readFileSync(this.options.sessionPath, 'utf-8'));
+  await this.ig.state.deserialize(stateData);
+  logger.info('📦 Loaded full session state');
+}
 
   /**
    * Disconnect from Instagram
