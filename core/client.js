@@ -92,7 +92,7 @@ export class InstagramClient extends EventEmitter {
    * @param {string} password - Instagram password
    * @returns {Promise<void>}
    */
-const fs = require('fs');
+
 
 async login(username) {
   try {
