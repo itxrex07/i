@@ -242,6 +242,4 @@ class User {
 }
 
 
-export class User {
-  // your class code
-}
+
