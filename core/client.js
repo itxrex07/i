@@ -166,19 +166,6 @@ async _saveSession() {
   fs.writeFileSync('./session.json', JSON.stringify(state, null, 2));
 }
 
-/**
- * Load full session state
- * @returns {Promise<void>}
- */
-async _loadSession() {
-  if (!fs.existsSync(this.options.sessionPath)) {
-    throw new Error('No session file found');
-  }
-
-  const stateData = JSON.parse(fs.readFileSync(this.options.sessionPath, 'utf-8'));
-  await this.ig.state.deserialize(stateData);
-  logger.info('📦 Loaded full session state');
-}
 
   /**
    * Disconnect from Instagram
