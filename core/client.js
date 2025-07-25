@@ -4,7 +4,8 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import tough from 'tough-cookie';
 import { Collection } from '../structures/Collection.js';
-import { User } from '../structures/User.js';
+import User from '../structures/User.js';
+
 import { Chat } from '../structures/Chat.js';
 import { Message } from '../structures/Message.js';
 import { logger } from '../utils/utils.js';
