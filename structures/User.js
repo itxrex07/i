@@ -242,3 +242,6 @@ class User {
 }
 
 module.exports = User
+export class User {
+  // your class code
+}
