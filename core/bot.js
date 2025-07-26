@@ -132,12 +132,14 @@ export class InstagramBot {
    * Get bot statistics
    * @returns {Object}
    */
-  getStats() {
-    return {
-      running: this.running,
-      client: this.client.getStats(),
-      modules: this.moduleManager.modules.length,
-      commands: this.moduleManager.getAllCommands().size
-    };
-  }
+getStats() {
+  const safeCommands = this.moduleManager.getAllCommands?.();
+  return {
+    running: this.running,
+    client: this.client.getStats?.() || {},
+    modules: this.moduleManager.modules?.length || 0,
+    commands: safeCommands?.size || 0,
+  };
+}
+
 }
