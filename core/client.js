@@ -200,6 +200,21 @@ export class InstagramClient extends EventEmitter {
   }
 
   /**
+   * Create or get a user object (alias for compatibility)
+   * @param {string} userId - User ID
+   * @param {Object} userData - User data from API
+   * @returns {User}
+   */
+  _patchOrCreateUser(userId, userData) {
+    if (this.cache.users.has(userId)) {
+      this.cache.users.get(userId)._patch(userData);
+    } else {
+      this.cache.users.set(userId, new User(this, userData));
+    }
+    return this.cache.users.get(userId);
+  }
+
+  /**
    * Fetch a user by ID or username
    * @param {string} query - User ID or username
    * @param {boolean} force - Force fetch from API
@@ -392,6 +407,13 @@ export class InstagramClient extends EventEmitter {
       // Create message object
       const message = this._createMessage(threadId, messageData);
       chat.messages.set(message.id, message);
+
+      // Handle sent message promises
+      if (chat._sentMessagePromises && chat._sentMessagePromises.has(message.id)) {
+        const resolve = chat._sentMessagePromises.get(message.id);
+        chat._sentMessagePromises.delete(message.id);
+        resolve(message);
+      }
 
       // Emit events
       this.emit('messageCreate', message);

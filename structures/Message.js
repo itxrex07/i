@@ -32,6 +32,13 @@ export class Message {
     this.reactions = this._extractReactions(data);
     this.fromBot = this.authorId === this.client.user?.id;
     this.system = this.type === 'action_log';
+
+    // Add likes array for compatibility
+    this.likes = this.reactions.map(reaction => ({
+      userID: reaction.userId,
+      timestamp: reaction.timestamp.getTime()
+    }));
+
     this._handleSentMessagePromise();
   }
 
@@ -93,6 +100,7 @@ export class Message {
     if (data.text) return data.text;
     if (data.item_type === 'link' && data.link?.text) return data.link.text;
     if (data.item_type === 'story_share' && data.story_share?.text) return data.story_share.text;
+    if (data.item_type === 'story_share' && data.story_share?.message) return data.story_share.message;
     if (data.message) return data.message;
     if (data.content) return data.content;
 
@@ -120,7 +128,10 @@ export class Message {
     if (data.item_type === 'animated_media') {
       return {
         type: 'animated',
+        isLike: false,
+        isAnimated: true,
         isSticker: data.animated_media.is_sticker,
+        isRandom: data.animated_media.is_random || false,
         url: data.animated_media.images.fixed_height.url,
         width: data.animated_media.images.fixed_height.width,
         height: data.animated_media.images.fixed_height.height
@@ -131,6 +142,9 @@ export class Message {
       const media = data.media;
       return {
         type: media.media_type === 1 ? 'photo' : 'video',
+        isLike: false,
+        isAnimated: false,
+        isSticker: false,
         url: media.image_versions2?.candidates[0]?.url || media.video_versions?.[0]?.url,
         width: media.original_width,
         height: media.original_height
@@ -140,6 +154,9 @@ export class Message {
     if (data.item_type === 'like') {
       return {
         type: 'like',
+        isLike: true,
+        isAnimated: false,
+        isSticker: false,
         url: null
       };
     }
@@ -173,12 +190,24 @@ export class Message {
     if (data.item_type !== 'story_share') return null;
 
     const storyShare = data.story_share;
-    if (!storyShare || !storyShare.media) return null;
+    if (!storyShare) return null;
+
+    // Handle cases where story is no longer available
+    const message = storyShare.message;
+    if (message === 'No longer available' || message?.startsWith("This story is hidden because")) {
+      return {
+        author: null,
+        url: null,
+        isExpired: true
+      };
+    }
+
+    if (!storyShare.media) return null;
 
     return {
       author: this.client._patchOrCreateUser(storyShare.media.user.pk, storyShare.media.user),
       url: storyShare.media.image_versions2?.candidates[0]?.url,
-      isExpired: storyShare.message === 'No longer available'
+      isExpired: false
     };
   }
 
@@ -194,6 +223,20 @@ export class Message {
     return data.reactions.likes.map(reaction => ({
       userId: reaction.sender_id,
       timestamp: new Date(reaction.timestamp / 1000)
+    }));
+  }
+
+  /**
+   * Update message data (for handling real-time updates)
+   * @param {Object} data - Updated message data
+   * @private
+   */
+  _patch(data) {
+    // Update reactions/likes
+    this.reactions = this._extractReactions(data);
+    this.likes = this.reactions.map(reaction => ({
+      userID: reaction.userId,
+      timestamp: reaction.timestamp.getTime()
     }));
   }
 
@@ -325,6 +368,7 @@ export class Message {
       voiceData: this.voiceData,
       storyData: this.storyData,
       reactions: this.reactions,
+      likes: this.likes,
       fromBot: this.fromBot,
       system: this.system
     };

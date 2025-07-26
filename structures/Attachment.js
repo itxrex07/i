@@ -147,13 +147,10 @@ export class Attachment {
    */
   async _processImage(buffer) {
     try {
-      // Try to use sharp for better image processing if available
-      let sharp;
+      // Try to use jimp first (as in original insta.js)
+      let Jimp;
       try {
-        sharp = (await import('sharp')).default;
-      } catch {
-        // Fallback to jimp if sharp is not available
-        const Jimp = (await import('jimp')).default;
+        Jimp = (await import('jimp')).default;
         const image = await Jimp.read(buffer);
         
         this.dimensions = {
@@ -165,22 +162,29 @@ export class Attachment {
         this.type = 'image';
         this.extension = '.jpg';
         return;
+      } catch {
+        // Try sharp as fallback
+        try {
+          const sharp = (await import('sharp')).default;
+          const image = sharp(buffer);
+          const metadata = await image.metadata();
+          
+          this.dimensions = {
+            width: metadata.width,
+            height: metadata.height
+          };
+
+          // Convert to JPEG
+          this.file = await image.jpeg({ quality: 90 }).toBuffer();
+          this.type = 'image';
+          this.extension = '.jpg';
+          return;
+        } catch {
+          // Neither jimp nor sharp available, use buffer as-is
+          this.file = buffer;
+          this.type = this._detectTypeFromBuffer(buffer);
+        }
       }
-
-      // Use sharp for processing
-      const image = sharp(buffer);
-      const metadata = await image.metadata();
-      
-      this.dimensions = {
-        width: metadata.width,
-        height: metadata.height
-      };
-
-      // Convert to JPEG
-      this.file = await image.jpeg({ quality: 90 }).toBuffer();
-      this.type = 'image';
-      this.extension = '.jpg';
-
     } catch (error) {
       // If image processing fails, assume it's not an image
       this.file = buffer;

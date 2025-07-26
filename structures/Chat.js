@@ -43,18 +43,25 @@ export class Chat {
     this.typing = false;
 
     /**
+     * Whether to disable typing on send
+     * @type {boolean|null}
+     * @private
+     */
+    this._disableTypingOnSend = null;
+
+    /**
      * Typing timeout reference
      * @type {NodeJS.Timeout|null}
      * @private
      */
-    this._typingTimeout = null;
+    this._stopTypingTimeout = null;
 
     /**
      * Keep typing alive interval
      * @type {NodeJS.Timeout|null}
      * @private
      */
-    this._keepTypingInterval = null;
+    this._keepTypingAliveInterval = null;
 
     /**
      * Sent message promises for tracking
@@ -206,9 +213,10 @@ export class Chat {
   /**
    * Send a text message
    * @param {string} content - Message content
+   * @param {Object} options - Send options
    * @returns {Promise<Message>}
    */
-  async sendMessage(content) {
+  async sendMessage(content, options = {}) {
     return new Promise((resolve, reject) => {
       const urls = this._extractUrls(content);
       const promise = urls.length > 0 ? 
@@ -216,6 +224,9 @@ export class Chat {
         this.threadEntity.broadcastText(content);
 
       promise.then(({ item_id: itemId }) => {
+        if (this.typing && this._disableTypingOnSend) {
+          this._keepTypingAlive();
+        }
         this._sentMessagePromises.set(itemId, resolve);
         
         // Check if message already exists
@@ -244,6 +255,9 @@ export class Chat {
     return new Promise((resolve, reject) => {
       this.threadEntity.broadcastPhoto({ file: attachment.file })
         .then(({ item_id: itemId }) => {
+          if (this.typing && this._disableTypingOnSend) {
+            this._keepTypingAlive();
+          }
           this._sentMessagePromises.set(itemId, resolve);
           
           if (this.messages.has(itemId)) {
@@ -265,6 +279,9 @@ export class Chat {
       this.threadEntity.broadcastVoice({ file: buffer })
         .then((upload) => {
           const itemId = upload.message_metadata[0].item_id;
+          if (this.typing && this._disableTypingOnSend) {
+            this._keepTypingAlive();
+          }
           this._sentMessagePromises.set(itemId, resolve);
           
           if (this.messages.has(itemId)) {
@@ -280,10 +297,10 @@ export class Chat {
    * Start typing indicator
    * @param {Object} options - Typing options
    * @param {number} options.duration - How long to type (ms)
-   * @param {boolean} options.stopOnSend - Stop typing when sending message
+   * @param {boolean} options.disableOnSend - Stop typing when sending message
    * @returns {Promise<void>}
    */
-  async startTyping({ duration = 10000, stopOnSend = true } = {}) {
+  async startTyping({ duration = 10000, disableOnSend = true } = {}) {
     if (this.typing) return;
 
     this.typing = true;
@@ -292,18 +309,31 @@ export class Chat {
       isActive: true
     });
 
+    this._disableTypingOnSend = disableOnSend;
+
     // Stop typing after duration
-    this._typingTimeout = setTimeout(() => this.stopTyping(), duration);
+    this._stopTypingTimeout = setTimeout(() => this.stopTyping(), duration);
 
     // Keep typing alive
-    this._keepTypingInterval = setInterval(async () => {
-      if (this.typing) {
-        await this.client.ig.realtime.direct.indicateActivity({
-          threadId: this.id,
-          isActive: true
-        });
-      }
+    this._keepTypingAliveInterval = setInterval(async () => {
+      await this._keepTypingAlive();
     }, 9000);
+  }
+
+  /**
+   * Keep typing alive (internal method)
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _keepTypingAlive() {
+    if (this.typing) {
+      await this.client.ig.realtime.direct.indicateActivity({
+        threadId: this.id,
+        isActive: true
+      });
+    } else if (this._keepTypingAliveInterval) {
+      clearInterval(this._keepTypingAliveInterval);
+    }
   }
 
   /**
@@ -315,19 +345,118 @@ export class Chat {
 
     this.typing = false;
     
-    if (this._typingTimeout) {
-      clearTimeout(this._typingTimeout);
-      this._typingTimeout = null;
+    if (this._stopTypingTimeout) {
+      clearTimeout(this._stopTypingTimeout);
+      this._stopTypingTimeout = null;
     }
 
-    if (this._keepTypingInterval) {
-      clearInterval(this._keepTypingInterval);
-      this._keepTypingInterval = null;
+    if (this._keepTypingAliveInterval) {
+      clearInterval(this._keepTypingAliveInterval);
+      this._keepTypingAliveInterval = null;
     }
 
     await this.client.ig.realtime.direct.indicateActivity({
       threadId: this.id,
       isActive: false
+    });
+  }
+
+  /**
+   * Start typing indicator (legacy method name for compatibility)
+   * @param {Object} options - Typing options
+   * @returns {Promise<void>}
+   * @deprecated Use startTyping instead
+   */
+  async startTyping_legacy({ duration, disableOnSend } = {}) {
+    return this.startTyping({ duration, disableOnSend });
+  }
+
+  /**
+   * Stop typing indicator (ensure compatibility)
+   * @returns {Promise<void>}
+   */
+  async stopTyping_legacy() {
+    return this.stopTyping();
+  }
+
+  /**
+   * Keep typing alive method (for compatibility)
+   * @returns {Promise<void>}
+   * @private
+   */
+  async _keepTypingAlive_legacy() {
+    return this._keepTypingAlive();
+  }
+
+  /**
+   * Send a text message (legacy method for compatibility)
+   * @param {string} content - Message content
+   * @param {Object} options - Send options
+   * @returns {Promise<Message>}
+   * @deprecated Use sendMessage instead
+   */
+  async sendMessage_legacy(content, options) {
+    return new Promise((resolve) => {
+      const urls = this._extractUrls(content);
+      const promise = urls.length >= 1 ? 
+        this.threadEntity.broadcastText(content, Array.from(urls)) : 
+        this.threadEntity.broadcastText(content);
+      
+      promise.then(({ item_id: itemId }) => {
+        if (this.typing && !this._disableTypingOnSend) this._keepTypingAlive();
+        this._sentMessagePromises.set(itemId, resolve);
+        if (this.messages.has(itemId)) {
+          this._sentMessagePromises.delete(itemId);
+          resolve(this.messages.get(itemId));
+        }
+      });
+    });
+  }
+
+  /**
+   * Send a photo (legacy method for compatibility)
+   * @param {string|Buffer|Attachment} attachment - Photo to send
+   * @returns {Promise<Message>}
+   * @deprecated Use sendPhoto instead
+   */
+  async sendPhoto_legacy(attachment) {
+    const { Attachment } = await import('./Attachment.js');
+    
+    if (!(attachment instanceof Attachment)) {
+      attachment = new Attachment(attachment);
+    }
+    
+    return new Promise((resolve) => {
+      attachment._verify().then(() => {
+        this.threadEntity.broadcastPhoto({ file: attachment.file }).then(({ item_id: itemId }) => {
+          if (this.typing && !this._disableTypingOnSend) this._keepTypingAlive();
+          this._sentMessagePromises.set(itemId, resolve);
+          if (this.messages.has(itemId)) {
+            this._sentMessagePromises.delete(itemId);
+            resolve(this.messages.get(itemId));
+          }
+        });
+      });
+    });
+  }
+
+  /**
+   * Send a voice message (legacy method for compatibility)
+   * @param {Buffer} buffer - Audio buffer (MP4 format)
+   * @returns {Promise<Message>}
+   * @deprecated Use sendVoice instead
+   */
+  async sendVoice_legacy(buffer) {
+    return new Promise((resolve) => {
+      this.threadEntity.broadcastVoice({ file: buffer }).then((upload) => {
+        const itemId = upload.message_metadata[0].item_id;
+        if (this.typing && !this._disableTypingOnSend) this._keepTypingAlive();
+        this._sentMessagePromises.set(itemId, resolve);
+        if (this.messages.has(itemId)) {
+          this._sentMessagePromises.delete(itemId);
+          resolve(this.messages.get(itemId));
+        }
+      });
     });
   }
 
@@ -405,8 +534,14 @@ export class Chat {
    * @private
    */
   _extractUrls(text) {
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
-    return text.match(urlRegex) || [];
+    try {
+      // Use get-urls if available, otherwise fallback to regex
+      const getUrls = require('get-urls');
+      return Array.from(getUrls(text));
+    } catch {
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      return text.match(urlRegex) || [];
+    }
   }
 
   /**

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { Collection } from './Collection.js';
 
 /**
  * Collects messages in a chat based on filters and conditions
@@ -54,7 +55,7 @@ export class MessageCollector extends EventEmitter {
      * Collected messages
      * @type {Collection<string, Message>}
      */
-    this.collected = new (require('../structures/Collection.js').Collection)();
+    this.collected = new Collection();
 
 
     /**

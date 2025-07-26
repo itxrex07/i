@@ -122,6 +122,13 @@ export class User {
      * @type {Date|null}
      */
     this.lastSeen = data.last_seen ? new Date(data.last_seen * 1000) : this.lastSeen;
+
+    /**
+     * Total IGTV videos count
+     * @type {number|null}
+     * @private
+     */
+    this._totalIgtvVideos = data.total_igtv_videos ?? this._totalIgtvVideos;
   }
 
   /**
@@ -292,6 +299,14 @@ export class User {
   }
 
   /**
+   * The user's total IGTV videos count
+   * @type {number|null}
+   */
+  get totalIgtvVideos() {
+    return this._totalIgtvVideos;
+  }
+
+  /**
    * String representation
    * @returns {string}
    */
@@ -316,7 +331,8 @@ export class User {
       mediaCount: this.mediaCount,
       followerCount: this.followerCount,
       followingCount: this.followingCount,
-      lastSeen: this.lastSeen
+      lastSeen: this.lastSeen,
+      totalIgtvVideos: this.totalIgtvVideos
     };
   }
 }
