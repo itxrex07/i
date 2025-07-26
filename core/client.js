@@ -1044,7 +1044,7 @@ export class InstagramClient extends EventEmitter {
 
     fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2));
     logger.info(`💾 Saved session state to ${sessionPath}`);
-  }
+  }/**
    * @returns {Promise<void>}
    * @private
    */
