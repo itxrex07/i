@@ -1147,7 +1147,7 @@ export class InstagramClient extends EventEmitter {
    */
   requiresFreshAuth() {
     return this._isFbnsSetupScheduled();
-  }
+  }/**
    * @returns {Object}
    */
   getFbnsStatus() {
