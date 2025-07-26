@@ -1,5 +1,5 @@
 import { IgApiClient } from 'instagram-private-api';
-import { withFbnsAndRealtime, withRealtime, withFbns } from 'instagram_mqtt';
+import { withRealtime } from 'instagram_mqtt';
 import { EventEmitter } from 'events';
 import fs from 'fs';
 import tough from 'tough-cookie';
@@ -8,10 +8,9 @@ import { User } from '../structures/User.js';
 import { Chat } from '../structures/Chat.js';
 import { Message } from '../structures/Message.js';
 import { logger } from '../utils/utils.js';
-import { Util } from '../utils/lib-util.js';
 
 /**
- * Enhanced Instagram client with full feature support
+ * Enhanced Instagram client with rich object support
  * @extends {EventEmitter}
  */
 export class InstagramClient extends EventEmitter {
@@ -19,20 +18,15 @@ export class InstagramClient extends EventEmitter {
     super();
 
     /**
-   * Load cookies from file
-   * @returns {Promise<void>}
-   * @private
-/**
- * Client options
- * @type {Object}
- */
+     * Client options
+     * @type {Object}
+     */
     this.options = {
       disableReplyPrefix: false,
       sessionPath: './session/session.json',
       messageCheckInterval: 5000,
       maxRetries: 3,
       autoReconnect: true,
-      enableFbns: true,
       ...options
     };
 
@@ -40,7 +34,7 @@ export class InstagramClient extends EventEmitter {
      * Instagram API client
      * @type {IgApiClient}
      */
-    this.ig = null;
+    this.ig = withRealtime(new IgApiClient());
 
     /**
      * Bot user object
@@ -102,38 +96,22 @@ export class InstagramClient extends EventEmitter {
     try {
       logger.info('🔑 Logging into Instagram...');
       
-      // Always initialize with FBNS and Realtime support
-      logger.info('🔧 Initializing with FBNS and Realtime support...');
-      this.ig = withFbnsAndRealtime(new IgApiClient());
-      
       this.ig.state.generateDevice(username);
 
-      // Try to load full session state first (cookies + session data)
-      let loginWithCookies = false;
+      // Try to load cookies first
       try {
-        await this._loadSession();
+        await this._loadCookies();
         await this.ig.account.currentUser();
-        logger.info('✅ Logged in using saved session');
-        loginWithCookies = true;
+        logger.info('✅ Logged in using saved cookies');
       } catch (error) {
-        logger.info('⚠️ Session login failed, trying cookies...');
-        try {
-          await this._loadCookies();
-          await this.ig.account.currentUser();
-          logger.info('✅ Logged in using saved cookies');
-          loginWithCookies = true;
-        } catch (cookieError) {
-          if (!password) {
-            throw new Error('❌ Password required for fresh login');
-          }
-          
-          logger.info('🔑 Attempting fresh login...');
-          await this.ig.account.login(username, password);
-          await this._saveSession(); // Save full session after fresh login
-          await this._saveCookies();
-          logger.info('✅ Fresh login successful');
-          loginWithCookies = false;
+        if (!password) {
+          throw new Error('❌ Password required for fresh login');
         }
+        
+        logger.info('🔑 Attempting fresh login...');
+        await this.ig.account.login(username, password);
+        await this._saveCookies();
+        logger.info('✅ Fresh login successful');
       }
 
       // Get user info
@@ -146,41 +124,18 @@ export class InstagramClient extends EventEmitter {
       // Setup realtime handlers
       this._setupRealtimeHandlers();
 
-      // Connect to realtime first
-      logger.info('🔌 Connecting to Instagram Realtime...');
+      // Connect to realtime
       await this.ig.realtime.connect({
         autoReconnect: this.options.autoReconnect,
         irisData: await this.ig.feed.directInbox().request()
       });
-      logger.info('✅ Realtime connected successfully');
-
-      // Handle FBNS setup based on login method
-      if (this.options.enableFbns) {
-        if (loginWithCookies) {
-          // For cookie/session login, we need to re-establish FBNS connection
-          await this._setupFbnsAfterCookieLogin();
-        } else {
-          // For fresh login, FBNS should be ready
-          this._setupFbnsHandlers();
-          await this.ig.fbns.connect({
-            autoReconnect: this.options.autoReconnect
-          });
-          
-          // Clear any scheduled FBNS setup since we did fresh login
-          this._clearFbnsSetupSchedule();
-          
-          logger.info('✅ FBNS connected with fresh login');
-        }
-      }
 
       this.ready = true;
       this.running = true;
       this._retryCount = 0;
 
       logger.info(`✅ Connected as @${this.user.username} (ID: ${this.user.id})`);
-      logger.info(`📊 FBNS: ${this.options.enableFbns ? 'Enabled' : 'Disabled'}`);
       this.emit('ready');
-      this.emit('connected'); // For backward compatibility
 
       // Replay queued events
       this._replayEvents();
@@ -191,6 +146,27 @@ export class InstagramClient extends EventEmitter {
     }
   }
 
+  /**
+   * Disconnect from Instagram
+   * @returns {Promise<void>}
+   */
+  async disconnect() {
+    logger.info('🔌 Disconnecting from Instagram...');
+    
+    this.running = false;
+    this.ready = false;
+
+    try {
+      if (this.ig.realtime) {
+        await this.ig.realtime.disconnect();
+      }
+      logger.info('✅ Disconnected successfully');
+    } catch (error) {
+      logger.warn('⚠️ Error during disconnect:', error.message);
+    }
+
+    this.emit('disconnect');
+  }
 
   /**
    * Create or get a user object
@@ -309,9 +285,38 @@ export class InstagramClient extends EventEmitter {
   _setupRealtimeHandlers() {
     logger.info('📡 Setting up realtime handlers...');
 
-    // Handle realtime receive events
-    this.ig.realtime.on('receive', (topic, payload) => {
-      this.handleRealtimeReceive(topic, payload);
+    // Main message handler
+    this.ig.realtime.on('message', async (data) => {
+      try {
+        if (!this.ready) {
+          this._eventsToReplay.push(['message', data]);
+          return;
+        }
+
+        if (!data.message || !this._isNewMessage(data.message)) {
+          return;
+        }
+
+        await this._handleMessage(data.message, data);
+      } catch (error) {
+        logger.error('❌ Message handler error:', error.message);
+      }
+    });
+
+    // Direct events handler
+    this.ig.realtime.on('direct', async (data) => {
+      try {
+        if (!this.ready) {
+          this._eventsToReplay.push(['direct', data]);
+          return;
+        }
+
+        if (data.message && this._isNewMessage(data.message)) {
+          await this._handleMessage(data.message, data);
+        }
+      } catch (error) {
+        logger.error('❌ Direct handler error:', error.message);
+      }
     });
 
     // Connection events
@@ -332,516 +337,68 @@ export class InstagramClient extends EventEmitter {
         this._attemptReconnect();
       }
     });
+
+    // Debug events
+    this.ig.realtime.on('receive', (topic, messages) => {
+      const topicStr = String(topic || '');
+      if (topicStr.includes('direct') || topicStr.includes('message')) {
+        logger.debug(`📥 Realtime receive: ${topicStr}`);
+      }
+    });
   }
 
   /**
-   * Setup FBNS after cookie login by re-establishing connection
-   * @private
-   */
-  async _setupFbnsAfterCookieLogin() {
-    logger.info('🔧 Setting up FBNS after cookie login...');
-    
-    try {
-      // First, ensure we have the necessary tokens and session data
-      if (!this.ig.fbns) {
-        logger.warn('⚠️ FBNS not available in current client instance');
-        this.options.enableFbns = false;
-        return;
-      }
-
-      // Try to restore FBNS from saved session first
-      const restored = await this._restoreFbnsFromSession();
-      if (restored) {
-        logger.info('✅ FBNS successfully restored from session');
-        return;
-      }
-
-      // If restoration failed, try direct connection
-      logger.info('📱 Attempting direct FBNS connection...');
-      await this.ig.fbns.connect({
-        autoReconnect: this.options.autoReconnect
-      });
-
-      // Setup handlers after successful connection
-      this._setupFbnsHandlers();
-      
-      // Save the working session for future use
-      await this._saveSession();
-      
-      logger.info('✅ FBNS successfully setup after cookie login');
-      
-    } catch (error) {
-      logger.warn('⚠️ Failed to setup FBNS after cookie login:', error.message);
-      
-      // Check if it's a token/auth issue
-      if (error.message.includes('400 Bad Request') || error.message.includes('Invalid request')) {
-        logger.info('🔄 FBNS requires fresh authentication tokens...');
-        
-        try {
-          await this._handleFbnsTokenRefresh();
-        } catch (refreshError) {
-          logger.warn('⚠️ FBNS token refresh failed:', refreshError.message);
-          logger.warn('⚠️ Continuing without FBNS features...');
-          this.options.enableFbns = false;
-        }
-      } else {
-        logger.warn('⚠️ Continuing without FBNS features...');
-        this.options.enableFbns = false;
-      }
-    }
-  }
-
-  /**
-   * Handle FBNS token refresh when cookies-only login is insufficient
-   * @private
-   */
-  async _handleFbnsTokenRefresh() {
-    logger.info('🔄 Handling FBNS token refresh...');
-    
-    // Option 1: Try to use any cached password if available
-    if (this.options.cachedPassword && this.user?.username) {
-      try {
-        logger.info('🔑 Attempting fresh login with cached credentials for FBNS...');
-        
-        // Backup current session
-        const backupSession = await this.ig.state.serialize();
-        
-        // Fresh login to get FBNS tokens
-        await this.ig.account.login(this.user.username, this.options.cachedPassword);
-        
-        // Connect FBNS with fresh tokens
-        await this.ig.fbns.connect({
-          autoReconnect: this.options.autoReconnect
-        });
-        
-        this._setupFbnsHandlers();
-        await this._saveSession();
-        
-        logger.info('✅ FBNS tokens refreshed successfully');
-        return;
-        
-      } catch (error) {
-        logger.error('❌ Failed to refresh FBNS with cached password:', error.message);
-        // Restore backup session
-        try {
-          await this.ig.state.deserialize(backupSession);
-        } catch (restoreError) {
-          logger.error('❌ Failed to restore session backup:', restoreError.message);
-        }
-      }
-    }
-    
-    // Option 2: Schedule FBNS setup for next full login
-    logger.info('📝 Scheduling FBNS setup for next fresh login...');
-    this._scheduleNextFbnsSetup();
-    
-    throw new Error('FBNS setup requires fresh authentication');
-  }
-
-  /**
-   * Schedule FBNS setup for next fresh login
-   * @private
-   */
-  _scheduleNextFbnsSetup() {
-    const flagPath = this.options.sessionPath.replace('.json', '_fbns_needed.flag');
-    fs.writeFileSync(flagPath, JSON.stringify({
-      timestamp: Date.now(),
-      reason: 'FBNS tokens expired, fresh login required'
-    }));
-    
-    logger.info('🏃 Created flag for FBNS setup on next fresh login');
-  }
-
-  /**
-   * Check if FBNS setup is scheduled
+   * Check if message is new
+   * @param {Object} message - Message data
    * @returns {boolean}
    * @private
    */
-  _isFbnsSetupScheduled() {
-    const flagPath = this.options.sessionPath.replace('.json', '_fbns_needed.flag');
-    return fs.existsSync(flagPath);
-  }
-
-  /**
-   * Clear FBNS setup schedule
-   * @private
-   */
-  _clearFbnsSetupSchedule() {
-    const flagPath = this.options.sessionPath.replace('.json', '_fbns_needed.flag');
-    if (fs.existsSync(flagPath)) {
-      fs.unlinkSync(flagPath);
-      logger.info('🗑️ Cleared FBNS setup schedule flag');
-    }
-  }
-
-  /**
-   * Refresh FBNS authentication by performing a fresh authentication flow
-   * @private
-   */
-  async _refreshFbnsAuth() {
-    logger.info('🔄 Refreshing FBNS authentication with fresh session...');
-    
+  _isNewMessage(message) {
     try {
-      // We need to re-authenticate to get fresh FBNS tokens
-      // This is necessary because FBNS tokens aren't preserved in cookies
+      const messageTime = new Date(parseInt(message.timestamp) / 1000);
+      const isNew = messageTime > this.lastMessageCheck;
       
-      logger.info('🔑 Performing fresh auth to obtain FBNS tokens...');
+      if (isNew) {
+        this.lastMessageCheck = messageTime;
+      }
       
-      // Save current state
-      const currentCookies = await this.ig.state.cookieJar.getCookies('https://instagram.com');
-      const currentUserId = this.user?.id;
-      
-      // Create a temporary client for fresh authentication
-      const tempIg = withFbnsAndRealtime(new IgApiClient());
-      tempIg.state.generateDevice(this.user.username);
-      
-      // We need the password for fresh login to get FBNS tokens
-      // This is the limitation - FBNS requires fresh auth periodically
-      logger.warn('⚠️ FBNS requires fresh authentication - password needed');
-      logger.warn('⚠️ Saving current session state and disabling FBNS for now');
-      
-      // Save the current working session for future use
-      await this._saveSession();
-      
-      throw new Error('FBNS requires fresh password authentication');
-      
+      return isNew;
     } catch (error) {
-      logger.error('❌ Failed to refresh FBNS authentication:', error.message);
-      throw error;
+      logger.error('❌ Error checking message timestamp:', error.message);
+      return true; // Default to processing
     }
   }
 
   /**
-   * Attempt to restore FBNS from saved session tokens
+   * Handle incoming message
+   * @param {Object} messageData - Raw message data
+   * @param {Object} eventData - Event data
+   * @returns {Promise<void>}
    * @private
    */
-  async _restoreFbnsFromSession() {
-    logger.info('🔄 Attempting to restore FBNS from session tokens...');
-    
+  async _handleMessage(messageData, eventData) {
     try {
-      const sessionPath = this.options.sessionPath;
-      
-      if (!fs.existsSync(sessionPath)) {
-        throw new Error('No session file found for FBNS restoration');
-      }
-      
-      const sessionData = JSON.parse(fs.readFileSync(sessionPath, 'utf-8'));
-      
-      // Check if we have FBNS-related tokens in the session
-      if (sessionData.constants && sessionData.constants.FBNS_APPLICATION_ID) {
-        logger.info('📱 Found FBNS tokens in session, attempting restoration...');
-        
-        // Apply the session state that includes FBNS tokens
-        await this.ig.state.deserialize(sessionData);
-        
-        // Try to connect FBNS with restored tokens
-        await this.ig.fbns.connect({
-          autoReconnect: this.options.autoReconnect
-        });
-        
-        this._setupFbnsHandlers();
-        logger.info('✅ FBNS restored from session successfully');
-        return true;
-        
-      } else {
-        logger.warn('⚠️ No FBNS tokens found in session file');
-        return false;
-      }
-      
-    } catch (error) {
-      logger.warn('⚠️ Failed to restore FBNS from session:', error.message);
-      return false;
-    }
-  }
-  /**
-   * Setup FBNS event handlers
-   * @private
-   */
-  _setupFbnsHandlers() {
-    logger.info('📱 Setting up FBNS handlers...');
+      const threadId = eventData.thread?.thread_id || messageData.thread_id;
+      if (!threadId) return;
 
-    try {
-      if (this.ig.fbns && this.ig.fbns.push$) {
-        this.ig.fbns.push$.subscribe({
-          next: (data) => {
-            this.handleFbnsReceive(data);
-          },
-          error: (error) => {
-            logger.error('🚨 FBNS subscription error:', error.message);
-            this.emit('error', error);
-            
-            // Try to reconnect FBNS on error
-            if (this.options.autoReconnect) {
-              setTimeout(() => this._attemptFbnsReconnect(), 5000);
-            }
-          },
-          complete: () => {
-            logger.info('📱 FBNS subscription completed');
-          }
-        });
-        logger.info('✅ FBNS handlers setup successfully');
-      } else {
-        logger.warn('⚠️ FBNS push$ not available, retrying in 3 seconds...');
-        setTimeout(() => {
-          if (this.running && this.options.enableFbns) {
-            this._setupFbnsHandlers();
-          }
-        }, 3000);
-      }
-    } catch (error) {
-      logger.warn('⚠️ Failed to setup FBNS handlers:', error.message);
-      // Retry once more after a delay
-      setTimeout(() => {
-        if (this.running && this.options.enableFbns) {
-          this._setupFbnsHandlers();
-        }
-      }, 5000);
-    }
-  }
-
-  /**
-   * Attempt FBNS reconnection
-   * @private
-   */
-  async _attemptFbnsReconnect() {
-    if (!this.options.enableFbns || !this.running) return;
-    
-    logger.info('🔄 Attempting FBNS reconnection...');
-    
-    try {
-      if (this.ig.fbns.isConnected) {
-        await this.ig.fbns.disconnect();
-      }
-      
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      await this.ig.fbns.connect({
-        autoReconnect: this.options.autoReconnect
-      });
-      
-      this._setupFbnsHandlers();
-      logger.info('✅ FBNS reconnected successfully');
-      
-    } catch (error) {
-      logger.error('❌ FBNS reconnection failed:', error.message);
-    }
-  }
-
-  /**
-   * Handle Realtime messages with advanced processing
-   * @param {object} topic
-   * @param {object} payload
-   * @private
-   */
-  handleRealtimeReceive(topic, payload) {
-    if (!this.ready) {
-      this._eventsToReplay.push(['realtime', topic, payload]);
-      return;
-    }
-
-    this.emit('rawRealtime', topic, payload);
-
-    if (topic.id === '146') {
-      const rawMessages = JSON.parse(payload);
-      rawMessages.forEach(async (rawMessage) => {
-        rawMessage.data.forEach((data) => {
-          this._processRealtimeData(data);
-        });
-      });
-    }
-  }
-
-  /**
-   * Process individual realtime data operations
-   * @param {Object} data - Realtime data
-   * @private
-   */
-  async _processRealtimeData(data) {
-    switch (data.op) {
-      case 'replace':
-        await this._handleReplaceOperation(data);
-        break;
-      case 'add':
-        await this._handleAddOperation(data);
-        break;
-      case 'remove':
-        await this._handleRemoveOperation(data);
-        break;
-      default:
-        break;
-    }
-  }
-
-  /**
-   * Handle replace operations (updates)
-   * @param {Object} data - Operation data
-   * @private
-   */
-  async _handleReplaceOperation(data) {
-    // Handle inbox thread updates
-    const isInboxThreadPath = Util.matchInboxThreadPath(data.path, false);
-    if (isInboxThreadPath) {
-      const [threadId] = Util.matchInboxThreadPath(data.path, true);
-      await this._handleChatUpdate(threadId, JSON.parse(data.value));
-      return;
-    }
-
-    // Handle message updates (likes, etc.)
-    const isMessagePath = Util.matchMessagePath(data.path, false);
-    if (isMessagePath) {
-      const [threadId] = Util.matchMessagePath(data.path, true);
-      await this._handleMessageUpdate(threadId, JSON.parse(data.value));
-      return;
-    }
-  }
-
-  /**
-   * Handle add operations
-   * @param {Object} data - Operation data
-   * @private
-   */
-  async _handleAddOperation(data) {
-    // Handle admin additions
-    const isAdminPath = Util.matchAdminPath(data.path, false);
-    if (isAdminPath) {
-      const [threadId, userId] = Util.matchAdminPath(data.path, true);
-      const chat = await this.fetchChat(threadId);
-      chat.adminUserIDs.push(userId);
-      const user = await this.fetchUser(userId);
-      this.emit('chatAdminAdd', chat, user);
-      return;
-    }
-
-    // Handle new messages
-    const isMessagePath = Util.matchMessagePath(data.path, false);
-    if (isMessagePath) {
-      const [threadId] = Util.matchMessagePath(data.path, true);
-      await this._handleNewMessage(threadId, JSON.parse(data.value));
-      return;
-    }
-  }
-
-  /**
-   * Handle remove operations
-   * @param {Object} data - Operation data
-   * @private
-   */
-  async _handleRemoveOperation(data) {
-    // Handle admin removals
-    const isAdminPath = Util.matchAdminPath(data.path, false);
-    if (isAdminPath) {
-      const [threadId, userId] = Util.matchAdminPath(data.path, true);
-      const chat = await this.fetchChat(threadId);
-      chat.adminUserIDs = chat.adminUserIDs.filter(id => id !== userId);
-      const user = await this.fetchUser(userId);
-      this.emit('chatAdminRemove', chat, user);
-      return;
-    }
-
-    // Handle message deletions
-    const isMessagePath = Util.matchMessagePath(data.path, false);
-    if (isMessagePath) {
-      const [threadId] = Util.matchMessagePath(data.path, true);
-      const chat = await this.fetchChat(threadId);
-      const messageId = data.value;
-      const existing = chat.messages.get(messageId);
-      if (existing) {
-        this.emit('messageDelete', existing);
-      }
-      return;
-    }
-  }
-
-  /**
-   * Handle chat updates
-   * @param {string} threadId - Thread ID
-   * @param {Object} newData - New chat data
-   * @private
-   */
-  async _handleChatUpdate(threadId, newData) {
-    if (this.cache.chats.has(threadId)) {
-      const chat = this.cache.chats.get(threadId);
-      const oldChat = Object.assign(Object.create(chat), chat);
-      chat._patch(newData);
-
-      // Compare name
-      if (oldChat.name !== chat.name) {
-        this.emit('chatNameUpdate', chat, oldChat.name, chat.name);
+      // Ensure chat exists
+      let chat = this.cache.chats.get(threadId);
+      if (!chat) {
+        chat = await this.fetchChat(threadId);
       }
 
-      // Compare users
-      if (oldChat.users.size < chat.users.size) {
-        const userAdded = chat.users.find(u => !oldChat.users.has(u.id));
-        if (userAdded) this.emit('chatUserAdd', chat, userAdded);
-      } else if (oldChat.users.size > chat.users.size) {
-        const userRemoved = oldChat.users.find(u => !chat.users.has(u.id));
-        if (userRemoved) this.emit('chatUserRemove', chat, userRemoved);
+      // Create message object
+      const message = this._createMessage(threadId, messageData);
+      chat.messages.set(message.id, message);
+
+      // Handle sent message promises
+      if (chat._sentMessagePromises && chat._sentMessagePromises.has(message.id)) {
+        const resolve = chat._sentMessagePromises.get(message.id);
+        chat._sentMessagePromises.delete(message.id);
+        resolve(message);
       }
 
-      // Compare calling status
-      if (!oldChat.calling && chat.calling) {
-        this.emit('callStart', chat);
-      } else if (oldChat.calling && !chat.calling) {
-        this.emit('callEnd', chat);
-      }
-    } else {
-      const chat = new Chat(this, threadId, newData);
-      this.cache.chats.set(chat.id, chat);
-    }
-  }
-
-  /**
-   * Handle message updates (likes, etc.)
-   * @param {string} threadId - Thread ID
-   * @param {Object} messageData - Message data
-   * @private
-   */  
-  async _handleMessageUpdate(threadId, messageData) {
-    const chat = await this.fetchChat(threadId);
-    
-    if (chat.messages.has(messageData.item_id)) {
-      const message = chat.messages.get(messageData.item_id);
-      const oldMessage = Object.assign(Object.create(message), message);
-      message._patch(messageData);
-
-      // Compare likes
-      if (oldMessage.likes.length > message.likes.length) {
-        const removed = oldMessage.likes.find(like => 
-          !message.likes.some(l => l.userID === like.userID)
-        );
-        if (removed) {
-          const user = await this.fetchUser(removed.userID);
-          this.emit('likeRemove', user, message);
-        }
-      } else if (message.likes.length > oldMessage.likes.length) {
-        const added = message.likes.find(like => 
-          !oldMessage.likes.some(l => l.userID === like.userID)
-        );
-        if (added) {
-          const user = await this.fetchUser(added.userID);
-          this.emit('likeAdd', user, message);
-        }
-      }
-    }
-  }
-
-  /**
-   * Handle new messages
-   * @param {string} threadId - Thread ID
-   * @param {Object} messageData - Message data
-   * @private
-   */
-  async _handleNewMessage(threadId, messageData) {
-    // Skip invalid message types
-    if (messageData.item_type === 'action_log' || messageData.item_type === 'video_call_event') {
-      return;
-    }
-
-    const chat = await this.fetchChat(threadId);
-    const message = this._createMessage(threadId, messageData);
-    chat.messages.set(message.id, message);
-
-    if (Util.isMessageValid(message)) {
+      // Emit events
       this.emit('messageCreate', message);
       
       if (message.fromBot) {
@@ -849,84 +406,12 @@ export class InstagramClient extends EventEmitter {
       } else {
         this.emit('messageReceived', message);
       }
-    }
-  }
 
-  /**
-   * Handle FBNS messages
-   * @param {Object} data - FBNS data
-   * @private
-   */
-  async handleFbnsReceive(data) {
-    try {
-      if (!this.ready) {
-        this._eventsToReplay.push(['fbns', data]);
-        return;
-      }
-
-      logger.debug('📱 FBNS received:', data.pushCategory);
-      this.emit('rawFbns', data);
-
-      switch (data.pushCategory) {
-        case 'new_follower':
-          if (data.sourceUserId) {
-            const follower = await this.fetchUser(data.sourceUserId);
-            this.emit('newFollower', follower);
-            logger.info(`👤 New follower: @${follower.username}`);
-          }
-          break;
-
-        case 'private_user_follow_request':
-          if (data.sourceUserId) {
-            const requester = await this.fetchUser(data.sourceUserId);
-            this.emit('followRequest', requester);
-            logger.info(`🔔 Follow request from: @${requester.username}`);
-          }
-          break;
-
-        case 'direct_v2_pending':
-          if (data.actionParams && data.actionParams.id) {
-            if (!this.cache.pendingChats.get(data.actionParams.id)) {
-              const pendingRequests = await this.ig.feed.directPending().items();
-              pendingRequests.forEach(thread => {
-                const chat = new Chat(this, thread.thread_id, thread);
-                this.cache.chats.set(thread.thread_id, chat);
-                this.cache.pendingChats.set(thread.thread_id, chat);
-              });
-            }
-            const pendingChat = this.cache.pendingChats.get(data.actionParams.id);
-            if (pendingChat) {
-              this.emit('pendingRequest', pendingChat);
-              logger.info(`💬 Pending message request from chat: ${pendingChat.id}`);
-            }
-          }
-          break;
-
-        case 'direct_v2_message':
-          // Handle direct message notifications
-          logger.debug('💬 Direct message notification received');
-          break;
-
-        case 'like':
-          // Handle like notifications
-          logger.debug('❤️ Like notification received');
-          break;
-
-        case 'comment':
-          // Handle comment notifications
-          logger.debug('💭 Comment notification received');
-          break;
-
-        default:
-          logger.debug(`📱 Unknown FBNS category: ${data.pushCategory}`);
-          this.emit('debug', 'Unknown FBNS category:', data.pushCategory, data);
-          break;
-      }
     } catch (error) {
-      logger.error('❌ Error handling FBNS message:', error.message);
-      this.emit('error', error);
+      logger.error('❌ Error handling message:', error.message);
     }
   }
+
 
   /**
    * Attempt to reconnect
@@ -963,53 +448,25 @@ export class InstagramClient extends EventEmitter {
    * @private
    */
   _replayEvents() {
-    this._eventsToReplay.forEach(event => {
-      const eventType = event.shift();
-      if (eventType === 'realtime') {
-        this.handleRealtimeReceive(...event);
-      } else if (eventType === 'fbns') {
-        this.handleFbnsReceive(...event);
+    for (const [eventType, data] of this._eventsToReplay) {
+      if (eventType === 'message') {
+        this._handleMessage(data.message, data);
+      } else if (eventType === 'direct') {
+        if (data.message) {
+          this._handleMessage(data.message, data);
+        }
       }
-    });
+    }
     this._eventsToReplay = [];
   }
 
   /**
-   * Load full session state from file
+   * Load cookies from file
    * @returns {Promise<void>}
    * @private
    */
-  async _loadSession() {
-    const sessionPath = this.options.sessionPath;
-    
-    if (!fs.existsSync(sessionPath)) {
-      throw new Error('No session found');
-    }
-
-    const session = JSON.parse(fs.readFileSync(sessionPath, 'utf-8'));
-    await this.ig.state.deserialize(session);
-    
-    logger.info(`📁 Loaded session state from ${sessionPath}`);
-  }
-
   /**
-   * Save full session state to file
-   * @returns {Promise<void>}
-   * @private
-   */
-  async _saveSession() {
-    const sessionPath = this.options.sessionPath;
-    const session = await this.ig.state.serialize();
-    
-    // Ensure directory exists
-    const dir = require('path').dirname(sessionPath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2));
-    logger.info(`💾 Saved session state to ${sessionPath}`);
-  }/**
+   * Load cookies from file
    * @returns {Promise<void>}
    * @private
    */
@@ -1082,46 +539,7 @@ export class InstagramClient extends EventEmitter {
       pendingChats: this.cache.pendingChats.size,
       messages: this.cache.messages.size,
       retryCount: this._retryCount,
-      lastMessageCheck: this.lastMessageCheck,
-      fbnsEnabled: this.options.enableFbns,
-      fbnsConnected: this.options.enableFbns && this.ig?.fbns?.isConnected,
-      realtimeConnected: this.ig?.realtime?.isConnected
-    };
-  }
-
-  /**
-   * Set cached password for FBNS token refresh (optional)
-   * @param {string} password - Password to cache for FBNS refresh
-   */
-  setCachedPassword(password) {
-    this.options.cachedPassword = password;
-    logger.info('🔐 Cached password set for FBNS token refresh');
-  }
-
-  /**
-   * Clear cached password
-   */
-  clearCachedPassword() {
-    delete this.options.cachedPassword;
-    logger.info('🗑️ Cleared cached password');
-  }
-
-  /**
-   * Check if FBNS requires fresh authentication
-   * @returns {boolean}
-   */
-  requiresFreshAuth() {
-    return this._isFbnsSetupScheduled();
-  }/**
-   * @returns {Object}
-   */
-  getFbnsStatus() {
-    return {
-      enabled: this.options.enableFbns,
-      available: !!(this.ig && this.ig.fbns),
-      pushObservable: !!(this.ig && this.ig.fbns && this.ig.fbns.push$),
-      connected: !!(this.ig && this.ig.fbns && this.ig.fbns.isConnected),
-      ready: this.ready && this.options.enableFbns
+      lastMessageCheck: this.lastMessageCheck
     };
   }
 
@@ -1139,132 +557,3 @@ export class InstagramClient extends EventEmitter {
     };
   }
 }
-
-/**
- * @event InstagramClient#messageCreate
- * @param {Message} message - The message that was sent
- */
-
-/**
- * @event InstagramClient#messageDelete
- * @param {Message} message - The message that was deleted
- */
-
-/**
- * @event InstagramClient#messageSent
- * @param {Message} message - The message that was sent by the bot
- */
-
-/**
- * @event InstagramClient#messageReceived
- * @param {Message} message - The message that was received by the bot
- */
-
-/**
- * @event InstagramClient#likeAdd
- * @param {User} user - The user who added the like
- * @param {Message} message - The message on which the like was added
- */
-
-/**
- * @event InstagramClient#likeRemove
- * @param {User} user - The user who removed the like
- * @param {Message} message - The message on which the like was removed
- */
-
-/**
- * @event InstagramClient#newFollower
- * @param {User} user - The user that started following the bot
- */
-
-/**
- * @event InstagramClient#followRequest
- * @param {User} user - The user who wants to follow the bot
- */
-
-/**
- * @event InstagramClient#pendingRequest
- * @param {Chat} chat - The chat that needs to be approved
- */
-
-/**
- * @event InstagramClient#chatNameUpdate
- * @param {Chat} chat - The chat whose name has changed
- * @param {string} oldName - The previous name of the chat
- * @param {string} newName - The new name of the chat
- */
-
-/**
- * @event InstagramClient#chatUserAdd
- * @param {Chat} chat - The chat in which the user has been added
- * @param {User} user - The user who has been added
- */
-
-/**
- * @event InstagramClient#chatUserRemove
- * @param {Chat} chat - The chat from which the user has been removed
- * @param {User} user - The user who has been removed
- */
-
-/**
- * @event InstagramClient#chatAdminAdd
- * @param {Chat} chat - The chat in which the user has become an administrator
- * @param {User} user - The user who has become admin
- */
-
-/**
- * @event InstagramClient#chatAdminRemove
- * @param {Chat} chat - The chat in which the user has lost administrator privileges
- * @param {User} user - The user who has lost admin privileges
- */
-
-/**
- * @event InstagramClient#callStart
- * @param {Chat} chat - The chat in which the call has started
- */
-
-/**
- * @event InstagramClient#callEnd
- * @param {Chat} chat - The chat in which the call has ended
- */
-
-/**
- * @event InstagramClient#ready
- * Emitted when the client is ready
- */
-
-/**
- * @event InstagramClient#connected
- * Emitted when the client is connected (alias for ready)
- */
-
-/**
- * @event InstagramClient#disconnect
- * Emitted when the client disconnects
- */
-
-/**
- * @event InstagramClient#error
- * @param {Error} error - The error that occurred
- */
-
-/**
- * @event InstagramClient#rawRealtime
- * @param {Object} topic - The realtime topic
- * @param {Object} payload - The realtime payload
- */
-
-/**
- * @event InstagramClient#rawFbns
- * @param {Object} data - The FBNS data
- */
-
-/**
- * @event InstagramClient#debug
- * @param {...any} args - Debug arguments
- */
-
-/**
- * @event InstagramClient#maxRetriesReached
- * Emitted when maximum reconnection attempts are reached
- */
