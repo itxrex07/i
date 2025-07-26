@@ -22,10 +22,10 @@ export class InstagramClient extends EventEmitter {
    * Load cookies from file
    * @returns {Promise<void>}
    * @private
-   */
-     * Client options
-     * @type {Object}
-     */
+/**
+ * Client options
+ * @type {Object}
+ */
     this.options = {
       disableReplyPrefix: false,
       sessionPath: './session/session.json',
