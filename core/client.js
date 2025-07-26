@@ -17,17 +17,15 @@ import { Util } from '../utils/lib-util.js';
 export class InstagramClient extends EventEmitter {
   constructor(options = {}) {
     super();
-    /**
-     * Load cookies from file
-     * @returns {Promise<void>}
-     * @private
-     */
 
     /**
+   * Load cookies from file
+   * @returns {Promise<void>}
+   * @private
+   */
      * Client options
      * @type {Object}
      */
-
     this.options = {
       disableReplyPrefix: false,
       sessionPath: './session/session.json',
@@ -164,6 +162,14 @@ export class InstagramClient extends EventEmitter {
         } else {
           // For fresh login, FBNS should be ready
           this._setupFbnsHandlers();
+          await this.ig.fbns.connect({
+            autoReconnect: this.options.autoReconnect
+          });
+          
+          // Clear any scheduled FBNS setup since we did fresh login
+          this._clearFbnsSetupSchedule();
+          
+          logger.info('✅ FBNS connected with fresh login');
         }
       }
 
@@ -378,8 +384,15 @@ export class InstagramClient extends EventEmitter {
         return;
       }
 
-      // Try to initialize FBNS connection
-      logger.info('📱 Attempting FBNS connection...');
+      // Try to restore FBNS from saved session first
+      const restored = await this._restoreFbnsFromSession();
+      if (restored) {
+        logger.info('✅ FBNS successfully restored from session');
+        return;
+      }
+
+      // If restoration failed, try direct connection
+      logger.info('📱 Attempting direct FBNS connection...');
       await this.ig.fbns.connect({
         autoReconnect: this.options.autoReconnect
       });
@@ -387,17 +400,26 @@ export class InstagramClient extends EventEmitter {
       // Setup handlers after successful connection
       this._setupFbnsHandlers();
       
+      // Save the working session for future use
+      await this._saveSession();
+      
       logger.info('✅ FBNS successfully setup after cookie login');
       
     } catch (error) {
       logger.warn('⚠️ Failed to setup FBNS after cookie login:', error.message);
-      logger.info('🔄 Attempting FBNS re-authentication...');
       
-      // Try to re-authenticate FBNS by refreshing session
-      try {
-        await this._refreshFbnsAuth();
-      } catch (refreshError) {
-        logger.warn('⚠️ FBNS re-authentication failed:', refreshError.message);
+      // Check if it's a token/auth issue
+      if (error.message.includes('400 Bad Request') || error.message.includes('Invalid request')) {
+        logger.info('🔄 FBNS requires fresh authentication tokens...');
+        
+        try {
+          await this._handleFbnsTokenRefresh();
+        } catch (refreshError) {
+          logger.warn('⚠️ FBNS token refresh failed:', refreshError.message);
+          logger.warn('⚠️ Continuing without FBNS features...');
+          this.options.enableFbns = false;
+        }
+      } else {
         logger.warn('⚠️ Continuing without FBNS features...');
         this.options.enableFbns = false;
       }
@@ -405,40 +427,165 @@ export class InstagramClient extends EventEmitter {
   }
 
   /**
-   * Refresh FBNS authentication
+   * Handle FBNS token refresh when cookies-only login is insufficient
+   * @private
+   */
+  async _handleFbnsTokenRefresh() {
+    logger.info('🔄 Handling FBNS token refresh...');
+    
+    // Option 1: Try to use any cached password if available
+    if (this.options.cachedPassword && this.user?.username) {
+      try {
+        logger.info('🔑 Attempting fresh login with cached credentials for FBNS...');
+        
+        // Backup current session
+        const backupSession = await this.ig.state.serialize();
+        
+        // Fresh login to get FBNS tokens
+        await this.ig.account.login(this.user.username, this.options.cachedPassword);
+        
+        // Connect FBNS with fresh tokens
+        await this.ig.fbns.connect({
+          autoReconnect: this.options.autoReconnect
+        });
+        
+        this._setupFbnsHandlers();
+        await this._saveSession();
+        
+        logger.info('✅ FBNS tokens refreshed successfully');
+        return;
+        
+      } catch (error) {
+        logger.error('❌ Failed to refresh FBNS with cached password:', error.message);
+        // Restore backup session
+        try {
+          await this.ig.state.deserialize(backupSession);
+        } catch (restoreError) {
+          logger.error('❌ Failed to restore session backup:', restoreError.message);
+        }
+      }
+    }
+    
+    // Option 2: Schedule FBNS setup for next full login
+    logger.info('📝 Scheduling FBNS setup for next fresh login...');
+    this._scheduleNextFbnsSetup();
+    
+    throw new Error('FBNS setup requires fresh authentication');
+  }
+
+  /**
+   * Schedule FBNS setup for next fresh login
+   * @private
+   */
+  _scheduleNextFbnsSetup() {
+    const flagPath = this.options.sessionPath.replace('.json', '_fbns_needed.flag');
+    fs.writeFileSync(flagPath, JSON.stringify({
+      timestamp: Date.now(),
+      reason: 'FBNS tokens expired, fresh login required'
+    }));
+    
+    logger.info('🏃 Created flag for FBNS setup on next fresh login');
+  }
+
+  /**
+   * Check if FBNS setup is scheduled
+   * @returns {boolean}
+   * @private
+   */
+  _isFbnsSetupScheduled() {
+    const flagPath = this.options.sessionPath.replace('.json', '_fbns_needed.flag');
+    return fs.existsSync(flagPath);
+  }
+
+  /**
+   * Clear FBNS setup schedule
+   * @private
+   */
+  _clearFbnsSetupSchedule() {
+    const flagPath = this.options.sessionPath.replace('.json', '_fbns_needed.flag');
+    if (fs.existsSync(flagPath)) {
+      fs.unlinkSync(flagPath);
+      logger.info('🗑️ Cleared FBNS setup schedule flag');
+    }
+  }
+
+  /**
+   * Refresh FBNS authentication by performing a fresh authentication flow
    * @private
    */
   async _refreshFbnsAuth() {
-    logger.info('🔄 Refreshing FBNS authentication...');
+    logger.info('🔄 Refreshing FBNS authentication with fresh session...');
     
     try {
-      // Get fresh session info
-      const userInfo = await this.ig.account.currentUser();
+      // We need to re-authenticate to get fresh FBNS tokens
+      // This is necessary because FBNS tokens aren't preserved in cookies
       
-      // Disconnect and reconnect FBNS with fresh session
-      if (this.ig.fbns.isConnected) {
-        await this.ig.fbns.disconnect();
-      }
+      logger.info('🔑 Performing fresh auth to obtain FBNS tokens...');
       
-      // Wait a bit before reconnecting
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Save current state
+      const currentCookies = await this.ig.state.cookieJar.getCookies('https://instagram.com');
+      const currentUserId = this.user?.id;
       
-      // Reconnect with fresh session
-      await this.ig.fbns.connect({
-        autoReconnect: this.options.autoReconnect
-      });
+      // Create a temporary client for fresh authentication
+      const tempIg = withFbnsAndRealtime(new IgApiClient());
+      tempIg.state.generateDevice(this.user.username);
       
-      // Setup handlers
-      this._setupFbnsHandlers();
+      // We need the password for fresh login to get FBNS tokens
+      // This is the limitation - FBNS requires fresh auth periodically
+      logger.warn('⚠️ FBNS requires fresh authentication - password needed');
+      logger.warn('⚠️ Saving current session state and disabling FBNS for now');
       
-      // Save the refreshed session
+      // Save the current working session for future use
       await this._saveSession();
       
-      logger.info('✅ FBNS authentication refreshed successfully');
+      throw new Error('FBNS requires fresh password authentication');
       
     } catch (error) {
       logger.error('❌ Failed to refresh FBNS authentication:', error.message);
       throw error;
+    }
+  }
+
+  /**
+   * Attempt to restore FBNS from saved session tokens
+   * @private
+   */
+  async _restoreFbnsFromSession() {
+    logger.info('🔄 Attempting to restore FBNS from session tokens...');
+    
+    try {
+      const sessionPath = this.options.sessionPath;
+      
+      if (!fs.existsSync(sessionPath)) {
+        throw new Error('No session file found for FBNS restoration');
+      }
+      
+      const sessionData = JSON.parse(fs.readFileSync(sessionPath, 'utf-8'));
+      
+      // Check if we have FBNS-related tokens in the session
+      if (sessionData.constants && sessionData.constants.FBNS_APPLICATION_ID) {
+        logger.info('📱 Found FBNS tokens in session, attempting restoration...');
+        
+        // Apply the session state that includes FBNS tokens
+        await this.ig.state.deserialize(sessionData);
+        
+        // Try to connect FBNS with restored tokens
+        await this.ig.fbns.connect({
+          autoReconnect: this.options.autoReconnect
+        });
+        
+        this._setupFbnsHandlers();
+        logger.info('✅ FBNS restored from session successfully');
+        return true;
+        
+      } else {
+        logger.warn('⚠️ No FBNS tokens found in session file');
+        return false;
+      }
+      
+    } catch (error) {
+      logger.warn('⚠️ Failed to restore FBNS from session:', error.message);
+      return false;
     }
   }
   /**
@@ -898,11 +1045,9 @@ export class InstagramClient extends EventEmitter {
     fs.writeFileSync(sessionPath, JSON.stringify(session, null, 2));
     logger.info(`💾 Saved session state to ${sessionPath}`);
   }
-  /**
    * @returns {Promise<void>}
    * @private
    */
-
   async _loadCookies() {
     const cookiePath = this.options.sessionPath.replace('.json', '_cookies.json');
     
@@ -980,7 +1125,29 @@ export class InstagramClient extends EventEmitter {
   }
 
   /**
-   * Check if FBNS is properly configured and connected
+   * Set cached password for FBNS token refresh (optional)
+   * @param {string} password - Password to cache for FBNS refresh
+   */
+  setCachedPassword(password) {
+    this.options.cachedPassword = password;
+    logger.info('🔐 Cached password set for FBNS token refresh');
+  }
+
+  /**
+   * Clear cached password
+   */
+  clearCachedPassword() {
+    delete this.options.cachedPassword;
+    logger.info('🗑️ Cleared cached password');
+  }
+
+  /**
+   * Check if FBNS requires fresh authentication
+   * @returns {boolean}
+   */
+  requiresFreshAuth() {
+    return this._isFbnsSetupScheduled();
+  }
    * @returns {Object}
    */
   getFbnsStatus() {
