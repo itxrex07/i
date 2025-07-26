@@ -191,41 +191,6 @@ export class InstagramClient extends EventEmitter {
     }
   }
 
-  /**
-   * Logout from Instagram
-   * @returns {Promise<void>}
-   */
-  async logout() {
-    logger.info('🔌 Logging out from Instagram...');
-    
-    this.running = false;
-    this.ready = false;
-
-    try {
-      if (this.ig.realtime) {
-        await this.ig.realtime.disconnect();
-      }
-      if (this.options.enableFbns && this.ig.fbns) {
-        await this.ig.fbns.disconnect();
-      }
-      if (this.ig.account) {
-        await this.ig.account.logout();
-      }
-      logger.info('✅ Logged out successfully');
-    } catch (error) {
-      logger.warn('⚠️ Error during logout:', error.message);
-    }
-
-    this.emit('disconnect');
-  }
-
-  /**
-   * Disconnect from Instagram (alias for logout)
-   * @returns {Promise<void>}
-   */
-  async disconnect() {
-    return this.logout();
-  }
 
   /**
    * Create or get a user object
