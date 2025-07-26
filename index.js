@@ -13,20 +13,24 @@ class HyperInsta {
   async initialize() {
     try {
       this.showStartupBanner();
-      
+
       console.log('📱 Connecting to Instagram...');
-      
+
       const username = process.env.INSTAGRAM_USERNAME || config.instagram.username;
       const password = process.env.INSTAGRAM_PASSWORD || config.instagram.password;
-      
+
       if (!username || !password) {
         throw new Error('Instagram credentials not provided');
       }
-      
+
+      // ✅ Login first
+      await this.instagramBot.login(username, password);
+
+      // ✅ Then show status
       this.showLiveStatus();
-      
+
     } catch (error) {
-      console.log(`❌ Startup failed: ${error.message}`);
+      console.error(`❌ Startup failed: ${error.stack || error.message}`);
       process.exit(1);
     }
   }
@@ -45,8 +49,8 @@ class HyperInsta {
 
   showLiveStatus() {
     const uptime = Date.now() - this.startTime;
-    const stats = this.instagramBot.getStats();
-    
+    const stats = this.instagramBot.getStats() || { modules: 0, commands: 0 };
+
     console.clear();
     console.log(`
 ╔══════════════════════════════════════════════════════════════╗
@@ -70,7 +74,7 @@ class HyperInsta {
 
   async start() {
     await this.initialize();
-    
+
     process.on('SIGINT', async () => {
       console.log('\n🛑 Shutting down gracefully...');
       await this.instagramBot.disconnect();
