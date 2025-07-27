@@ -347,104 +347,105 @@ class Client extends EventEmitter {
     }
     
 
-  async loginWithSession(sessionData) {
+/**
+ * Log the bot in to Instagram
+ * @param {string} username The username of the Instagram account.
+ * @param {string} password The password of the Instagram account.
+ * @param {object} [state] Optional state object. 
+ */
+async login(username, password, state) {
+    const ig = withFbnsAndRealtime(new IgApiClient());
+    ig.state.generateDevice(username);
+
     try {
-      await this.ig.state.deserialize(sessionData);
+        // Try to load existing state if available
+        if (existsSync('./sessions/state.json')) {
+            const savedState = JSON.parse(readFileSync('./sessions/state.json', 'utf8'));
+            ig.state.deserialize(savedState);
+            this.emit('debug', 'Loaded existing session state');
+        }
 
-      await this.ig.simulate.preLoginFlow();
-      await this.ig.account.currentUser(); // validate session
-      await this.ig.simulate.postLoginFlow();
-
-      this.user = await this.fetchSelfUser?.(); // optional
-      this.emit?.('connected');
-    } catch (error) {
-      console.error('❌ Failed to restore session:', error.message);
-      throw error;
-    }
-  }
-
-    /**
-     * Log the bot in to Instagram
-     * @param {string} username The username of the Instagram account.
-     * @param {string} password The password of the Instagram account.
-     * @param {object} [state] Optional state object. 
-     */
-    async login (username,password,state) {
-        const ig = withFbnsAndRealtime(new IgApiClient())
-        ig.state.generateDevice(username)
-        
-
-       
-
-        
-           
+        // If no valid session, perform fresh login
+        if (!ig.state.cookieJar.getCookieValue('sessionid')) {
+            this.emit('debug', 'No valid session found, performing fresh login');
+            await ig.account.login(username, password);
             
-            await ig.account.login(username,password);
-            
-            const response = await ig.user.usernameinfo(username)
-            //console.log(response)
-            //console.log(response.pk)
-            const userData = await ig.user.info(response.pk)
-            this.user = new ClientUser(this, {
-                ...response,
-                ...userData
-            })
-            this.cache.users.set(this.user.id, this.user)
-            this.emit('debug', 'logged', this.user)
-            
-            const checkUser = await ig.user.usernameinfo(username)
-            
-         
- 
+            // Save the new session state
+            if (!existsSync('./sessions')) mkdirSync('./sessions');
+            writeFileSync('./sessions/state.json', JSON.stringify(ig.state.serialize()));
+            this.emit('debug', 'Saved new session state');
+        }
+
+        // Verify we have a sessionid before proceeding
+        const sessionid = ig.state.cookieJar.getCookieValue('sessionid');
+        if (!sessionid) throw new Error('Login failed: sessionid cookie missing');
+
+        // Get user info
+        const response = await ig.user.usernameinfo(username);
+        const userData = await ig.user.info(response.pk);
+        this.user = new ClientUser(this, { ...response, ...userData });
+        this.cache.users.set(this.user.id, this.user);
+        this.emit('debug', 'Logged in', this.user);
+
+        // Load threads
         const threads = [
             ...await ig.feed.directInbox().items(),
             ...await ig.feed.directPending().items()
-        ]
+        ];
         threads.forEach((thread) => {
-            const chat = new Chat(this, thread.thread_id, thread)
-            this.cache.chats.set(thread.thread_id, chat)
+            const chat = new Chat(this, thread.thread_id, thread);
+            this.cache.chats.set(thread.thread_id, chat);
             if (chat.pending) {
-                this.cache.pendingChats.set(thread.thread_id, chat)
+                this.cache.pendingChats.set(thread.thread_id, chat);
             }
-        })
-        ig.realtime.on('receive', (topic, messages) => this.handleRealtimeReceive(topic, messages))
-        ig.realtime.on('error', ig.realtime.connect,console.error )
-        ig.realtime.on('close', () => console.error('RealtimeClient closed'))
+        });
 
-        await ig.realtime.connect({
-            autoReconnect: true,
-            irisData: await ig.feed.directInbox().request()
-        })
+        // Set up realtime listeners
+        ig.realtime.on('receive', (topic, messages) => this.handleRealtimeReceive(topic, messages));
+        ig.realtime.on('error', (err) => {
+            console.error('Realtime error:', err);
+            ig.realtime.connect();
+        });
+        ig.realtime.on('close', () => console.error('RealtimeClient closed'));
 
-        ig.fbns.push$.subscribe((data) => this.handleFbnsReceive(data))
-
-        await ig.fbns.connect({
-            autoReconnect: true
-        })
-        // PartialObserver<FbnsNotificationUnknown>
-       
-
-        
-
-        this.ig = ig
-        this.ready = true
-        this.emit('connected')
-        this.eventsToReplay.forEach((event) => {
-            const eventType = event.shift()
-            if (eventType === 'realtime') {
-                this.handleRealtimeReceive(...event)
-            } 
-        })
-    }
-
-    toJSON () {
-        const json = {
-            ready: this.ready,
-            options: this.options,
-            id: this.user.id
+        // Connect to realtime with retry logic
+        let retries = 3;
+        while (retries > 0) {
+            try {
+                await ig.realtime.connect({
+                    autoReconnect: true,
+                    irisData: await ig.feed.directInbox().request()
+                });
+                break;
+            } catch (err) {
+                retries--;
+                if (retries === 0) throw err;
+                await new Promise(resolve => setTimeout(resolve, 2000));
+            }
         }
-        return json
+
+        // Set up FBNS
+        ig.fbns.push$.subscribe((data) => this.handleFbnsReceive(data));
+        await ig.fbns.connect({ autoReconnect: true });
+
+        // Mark as ready
+        this.ig = ig;
+        this.ready = true;
+        this.emit('connected');
+        
+        // Replay any queued events
+        this.eventsToReplay.forEach((event) => {
+            const eventType = event.shift();
+            if (eventType === 'realtime') {
+                this.handleRealtimeReceive(...event);
+            }
+        });
+
+    } catch (error) {
+        this.emit('error', error);
+        throw error;
     }
+}
 }
 
 export default Client;
