@@ -1,6 +1,7 @@
-const fetch = require('node-fetch')
-const fs = require('fs')
-const Jimp = require('jimp')
+import fetch from 'node-fetch';
+import fs from 'fs';
+import Jimp from 'jimp';
+
 
 /**
  * Create an attachment for insta.js
@@ -72,4 +73,5 @@ class Attachment {
     }
 }
 
-module.exports = Attachment
+export default Attachment;
+
