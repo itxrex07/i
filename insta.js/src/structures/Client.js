@@ -2,7 +2,8 @@ import { withRealtime, withFbns, withFbnsAndRealtime } from 'instagram_mqtt';
 // import { GraphQLSubscriptions, SkywalkerSubscriptions } from 'instagram_mqtt/dist/realtime/subscriptions';
 import { IgApiClient } from 'instagram-private-api';
 import { EventEmitter } from 'events';
-import Collection from '@discordjs/collection';
+import { Collection } from '@discordjs/collection';
+
 
 import Util from '../utils/Util.js';
 import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync } from 'fs';
