@@ -352,7 +352,6 @@ class Client extends EventEmitter {
      * @param {string} password The password of the Instagram account.
      * @param {object} [state] Optional state object. 
      */
- */
     async login (username,password,state) {
         const ig = withFbnsAndRealtime(new IgApiClient())
         ig.state.generateDevice(username)
