@@ -23,36 +23,39 @@ export class InstagramBot {
   /**
    * Login to Instagram using cookies or credentials
    */
-  async login(username, password) {
-    try {
-      logger.info('🔑 Initializing Instagram client...');
-      
-      // Create client with options
-      this.client = new Client({
-        disableReplyPrefix: config.instagram.disableReplyPrefix || false
-      });
+/**
+ * Login to Instagram using username and password only
+ */
+async login(username, password) {
+  try {
+    logger.info('🔑 Initializing Instagram client...');
 
-      // Setup event handlers before login
-      this.setupEventHandlers();
+    // Create client instance
+    this.client = new Client({
+      disableReplyPrefix: config.instagram.disableReplyPrefix || false
+    });
 
-      // Try to login (insta.js will handle cookies automatically)
-      const session = JSON.parse(readFileSync('./session.json', 'utf-8'));
-await this.client.loginWithSession(session);
+    // Setup event handlers before login
+    this.setupEventHandlers();
 
-      this.ready = true;
-      this.running = true;
+    // Always login with username & password
+    await this.client.login(username, password);
 
-      logger.info(`✅ Successfully logged in as @${this.client.user.username}`);
-      
-      // Initialize modules after successful login
-      await this.initializeModules();
+    this.ready = true;
+    this.running = true;
 
-      return true;
-    } catch (error) {
-      logger.error('❌ Login failed:', error.message);
-      throw error;
-    }
+    logger.info(`✅ Successfully logged in as @${this.client.user.username}`);
+
+    // Initialize modules after successful login
+    await this.initializeModules();
+
+    return true;
+  } catch (error) {
+    logger.error('❌ Login failed:', error.message);
+    throw error;
   }
+}
+
 
   /**
    * Setup event handlers for the client
