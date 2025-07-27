@@ -1,4 +1,5 @@
-import MessageCollector from './MessageCollector';
+import MessageCollector from './MessageCollector.js';
+
 
 /**
  * Represents a Message
