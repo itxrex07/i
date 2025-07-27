@@ -32,7 +32,8 @@ async login(username, password) {
 
   this.setupEventHandlers();
 
-  const sessionFile = path.resolve(`${username}.json`); // session file in root dir
+  const sessionFile = path.resolve(`${username}.session.json`);
+ // session file in root dir
   let loggedIn = false;
 
   try {
