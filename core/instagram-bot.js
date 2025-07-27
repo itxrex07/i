@@ -4,8 +4,7 @@ import { config } from '../config.js';
 import fs from 'fs';
 import path from 'path';
 import { readFileSync } from 'fs';
-import { CookieJar } from 'tough-cookie'; // add this import
-
+import tough from 'tough-cookie';
 
 /**
  * Instagram Bot using original insta.js framework
@@ -26,51 +25,88 @@ export class InstagramBot {
 /**
  * Login to Instagram using session cookies or credentials
  */
-async login(username, password) {
-  logger.info('🔑 Initializing Instagram client...');
+  async login(username, password) {
+    logger.info('🔑 Initializing Instagram client...');
+    this.client = new Client({
+      disableReplyPrefix: config.instagram.disableReplyPrefix || false,
+    });
 
-  this.client = new Client({
-    disableReplyPrefix: config.instagram.disableReplyPrefix || false,
-  });
+    this.setupEventHandlers();
 
-  this.setupEventHandlers();
+    const sessionFile = path.resolve(`${username}.session.json`);
+    const cookieFile = path.resolve(`${username}.cookies.json`);
+    let loggedIn = false;
 
-  const sessionFile = path.resolve(`${username}.session.json`);
-  let loggedIn = false;
-
-  if (fs.existsSync(sessionFile)) {
-    try {
-      logger.info('🍪 Session file found — trying login via cookie...');
-      const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
-      await this.client.state.deserialize(sessionData);
-      await this.client.account.currentUser(); // Test session
-
-      logger.info(`✅ Logged in using session cookies as @${this.client.user.username}`);
-      loggedIn = true;
-    } catch (err) {
-      logger.warn('⚠️  Failed to login with session cookies, falling back to username/password...');
+    // 1. Try session.json
+    if (fs.existsSync(sessionFile)) {
+      try {
+        logger.info('🍪 Session file found — trying login via cookie...');
+        const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+        await this.client.state.deserialize(sessionData);
+        await this.client.account.currentUser(); // Validate session
+        logger.info(`✅ Logged in using session cookies as @${this.client.user.username}`);
+        loggedIn = true;
+      } catch (err) {
+        logger.warn('⚠️ Failed to login with session cookies, trying cookies.json...');
+      }
     }
-  }
 
-  if (!loggedIn) {
-    try {
-      await this.client.login(username, password);
-      logger.info(`✅ Logged in with credentials as @${this.client.user.username}`);
+    // 2. Try cookies.json if session failed
+    if (!loggedIn && fs.existsSync(cookieFile)) {
+      try {
+        logger.info('🍪 Loading raw cookies...');
+        const rawCookies = JSON.parse(fs.readFileSync(cookieFile, 'utf8'));
 
-      const serialized = await this.client.state.serialize();
-      fs.writeFileSync(sessionFile, JSON.stringify(serialized, null, 2));
-      logger.info('💾 Session saved for future use');
-    } catch (error) {
-      logger.error('❌ Login failed:', error.message);
-      throw error;
+        for (const cookie of rawCookies) {
+          const toughCookie = new tough.Cookie({
+            key: cookie.name,
+            value: cookie.value,
+            domain: cookie.domain.replace(/^\./, ''),
+            path: cookie.path || '/',
+            secure: cookie.secure !== false,
+            httpOnly: cookie.httpOnly !== false,
+            expires: cookie.expirationDate ? new Date(cookie.expirationDate * 1000) : undefined,
+          });
+          const cookieStr = toughCookie.toString();
+          const url = `https://${toughCookie.domain}${toughCookie.path}`;
+          await this.client.state.cookieJar.setCookie(cookieStr, url);
+        }
+
+        await this.client.account.currentUser(); // Validate cookie-based session
+        logger.info(`✅ Logged in using raw cookies as @${this.client.user.username}`);
+
+        // Save session from cookies
+        const session = await this.client.state.serialize();
+        fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2));
+        logger.info('💾 session.json saved from cookie-based login');
+        loggedIn = true;
+      } catch (err) {
+        logger.warn('⚠️ Failed to login with cookies.json:', err.message);
+      }
     }
-  }
 
-  this.ready = true;
-  this.running = true;
-  await this.initializeModules();
-  return true;
-}
+    // 3. Fresh login
+    if (!loggedIn) {
+      try {
+        logger.info('🔑 Performing fresh login with credentials...');
+        await this.client.login(username, password);
+        logger.info(`✅ Logged in as @${this.client.user.username}`);
+
+        const session = await this.client.state.serialize();
+        fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2));
+        logger.info('💾 session.json saved after fresh login');
+        loggedIn = true;
+      } catch (error) {
+        logger.error('❌ Login failed:', error.message);
+        throw error;
+      }
+    }
+
+    this.ready = true;
+    this.running = true;
+    await this.initializeModules();
+    return true;
+  }
 
 
   /**
