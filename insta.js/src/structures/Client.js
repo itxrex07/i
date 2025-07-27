@@ -346,34 +346,22 @@ class Client extends EventEmitter {
         await this.ig.fbns.disconnect();
     }
     
-Client.prototype.loginWithSession = async function (sessionData) {
-  this.ig = new IgApiClient();
 
-  try {
-    // Restore saved session state
-    await this.ig.state.deserialize(sessionData);
+  async loginWithSession(sessionData) {
+    try {
+      await this.ig.state.deserialize(sessionData);
 
-    // Validate login
-    await this.ig.simulate.preLoginFlow();
-    await this.ig.account.currentUser(); // test if still logged in
-    await this.ig.simulate.postLoginFlow();
+      await this.ig.simulate.preLoginFlow();
+      await this.ig.account.currentUser(); // validate session
+      await this.ig.simulate.postLoginFlow();
 
-    this.user = await this.fetchSelfUser?.(); // optional depending on your framework
-    this.emit?.('connected');
-  } catch (error) {
-    console.error('❌ Failed to restore session:', error.message);
-    throw error;
+      this.user = await this.fetchSelfUser?.(); // optional
+      this.emit?.('connected');
+    } catch (error) {
+      console.error('❌ Failed to restore session:', error.message);
+      throw error;
+    }
   }
-};
-
-async loginWithSession(sessionData) {
-  await this.ig.state.deserialize(sessionData);
-  await this.ig.simulate.preLoginFlow();
-  await this.ig.account.currentUser(); // confirm session works
-  await this.ig.simulate.postLoginFlow();
-  this.user = await this.fetchSelfUser();
-  this.emit('connected');
-}
 
     /**
      * Log the bot in to Instagram
