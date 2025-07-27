@@ -1,4 +1,5 @@
-import Collection from '@discordjs/collection';
+import { Collection } from '@discordjs/collection';
+
 
 /**
  * Represents a User
