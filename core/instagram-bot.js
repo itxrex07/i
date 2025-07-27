@@ -3,15 +3,26 @@ import { logger } from '../utils/utils.js';
 import { config } from '../config.js';
 import fs from 'fs';
 import path from 'path';
-import { readFileSync } from 'fs';
 import tough from 'tough-cookie';
+
+/**
+ * Helper function to check if required cookies are present
+ */
+function hasRequiredCookies(rawCookies) {
+  const required = ['sessionid', 'ds_user_id', 'csrftoken'];
+  return required.every(name => 
+    rawCookies.some(c => c.name === name && c.value)
+  );
+}
 
 /**
  * Instagram Bot using original insta.js framework
  */
 export class InstagramBot {
   constructor() {
-    this.client = null;
+    this.client = new Client({
+      disableReplyPrefix: config.instagram.disableReplyPrefix || false,
+    });
     this.ready = false;
     this.running = false;
     this.startTime = new Date();
@@ -22,20 +33,32 @@ export class InstagramBot {
     this.telegramBridge = null;
   }
 
-/**
- * Login to Instagram using session cookies or credentials
- */
+  /**
+   * Login to Instagram using session cookies or credentials
+   */
   async login(username, password) {
     logger.info('🔑 Initializing Instagram client...');
-    this.client = new Client({
-      disableReplyPrefix: config.instagram.disableReplyPrefix || false,
-    });
-
+    
+    // Setup event handlers after client is initialized
     this.setupEventHandlers();
 
     const sessionFile = path.resolve(`${username}.session.json`);
     const cookieFile = path.resolve(`${username}.cookies.json`);
     let loggedIn = false;
+
+    // Cleanup corrupted session files
+    if (fs.existsSync(sessionFile)) {
+      try {
+        const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+        if (!sessionData.cookies || !sessionData.cookies.length) {
+          logger.warn('🗑️ Removing empty/corrupted session file');
+          fs.unlinkSync(sessionFile);
+        }
+      } catch (e) {
+        logger.warn('🗑️ Removing malformed session file');
+        fs.unlinkSync(sessionFile);
+      }
+    }
 
     // 1. Try session.json
     if (fs.existsSync(sessionFile)) {
@@ -47,7 +70,9 @@ export class InstagramBot {
         logger.info(`✅ Logged in using session cookies as @${this.client.user.username}`);
         loggedIn = true;
       } catch (err) {
-        logger.warn('⚠️ Failed to login with session cookies, trying cookies.json...');
+        logger.warn('⚠️ Failed to login with session cookies:', err.message);
+        // Remove corrupted session file
+        try { fs.unlinkSync(sessionFile); } catch (e) {}
       }
     }
 
@@ -57,7 +82,17 @@ export class InstagramBot {
         logger.info('🍪 Loading raw cookies...');
         const rawCookies = JSON.parse(fs.readFileSync(cookieFile, 'utf8'));
 
+        // Validate required cookies exist
+        if (!hasRequiredCookies(rawCookies)) {
+          throw new Error('Missing required cookies: sessionid, ds_user_id, csrftoken');
+        }
+
         for (const cookie of rawCookies) {
+          if (!cookie.name || !cookie.value || !cookie.domain) {
+            logger.warn(`⚠️ Skipping invalid cookie: ${JSON.stringify(cookie)}`);
+            continue;
+          }
+
           const toughCookie = new tough.Cookie({
             key: cookie.name,
             value: cookie.value,
@@ -67,9 +102,9 @@ export class InstagramBot {
             httpOnly: cookie.httpOnly !== false,
             expires: cookie.expirationDate ? new Date(cookie.expirationDate * 1000) : undefined,
           });
-          const cookieStr = toughCookie.toString();
+
           const url = `https://${toughCookie.domain}${toughCookie.path}`;
-          await this.client.state.cookieJar.setCookie(cookieStr, url);
+          await this.client.state.cookieJar.setCookie(toughCookie, url);
         }
 
         await this.client.account.currentUser(); // Validate cookie-based session
@@ -90,6 +125,13 @@ export class InstagramBot {
       try {
         logger.info('🔑 Performing fresh login with credentials...');
         await this.client.login(username, password);
+        
+        // Check if sessionid exists
+        const sessionid = await this.client.state.extractCookieValue('sessionid');
+        if (!sessionid) {
+          throw new Error('Login succeeded but sessionid cookie missing');
+        }
+
         logger.info(`✅ Logged in as @${this.client.user.username}`);
 
         const session = await this.client.state.serialize();
@@ -107,7 +149,6 @@ export class InstagramBot {
     await this.initializeModules();
     return true;
   }
-
 
   /**
    * Setup event handlers for the client
