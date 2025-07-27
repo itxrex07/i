@@ -1,20 +1,20 @@
 import { logger } from '../utils/utils.js';
 import fs from 'fs';
 import path from 'path';
+import { Collection } from '@discordjs/collection'; // ✅ Add this line
 
 export class ModuleManager {
   constructor(instagramBot = null) {
     this.modules = [];
-    this.commandRegistry = null; // will be initialized in init()
+    this.commandRegistry = new Collection(); // ✅ Instantiate directly
     this.instagramBot = instagramBot;
     this.modulesPath = './modules';
   }
 
   async init() {
-    const { Collection } = await import('../structures/Collection.js');
-    this.commandRegistry = new Collection();
     await this.loadModules();
   }
+
 
   async loadModules() {
     try {
