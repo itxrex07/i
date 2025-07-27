@@ -59,4 +59,4 @@ class ClientUser extends User {
     }
 }
 
-export default ClientUser
+export default ClientUser;
