@@ -1,15 +1,15 @@
-const { withRealtime, withFbns,withFbnsAndRealtime } = require('instagram_mqtt')
-// const { GraphQLSubscriptions, SkywalkerSubscriptions } = require('instagram_mqtt/dist/realtime/subscriptions')
-const { IgApiClient } = require('instagram-private-api')
-const { EventEmitter } = require('events')
-const Collection = require('@discordjs/collection')
+import { withRealtime, withFbns, withFbnsAndRealtime } from 'instagram_mqtt';
+// import { GraphQLSubscriptions, SkywalkerSubscriptions } from 'instagram_mqtt/dist/realtime/subscriptions';
+import { IgApiClient } from 'instagram-private-api';
+import { EventEmitter } from 'events';
+import Collection from '@discordjs/collection';
 
-const Util = require('../utils/Util')
-const {existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync} = require('fs')
-const ClientUser = require('./ClientUser')
-const Message = require('./Message')
-const Chat = require('./Chat')
-const User = require('./User')
+import Util from '../utils/Util.js';
+import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync } from 'fs';
+import ClientUser from './ClientUser.js';
+import Message from './Message.js';
+import Chat from './Chat.js';
+import User from './User.js';
 
 /**
  * Client, the main hub for interacting with the Instagram API.
@@ -430,7 +430,8 @@ class Client extends EventEmitter {
     }
 }
 
-module.exports = Client
+export default Client;
+
 
 /**
  * Emitted when a message is sent in a chat the bot is in
