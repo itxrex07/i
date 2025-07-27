@@ -20,40 +20,57 @@ export class InstagramBot {
     this.telegramBridge = null;
   }
 
-  /**
-   * Login to Instagram using cookies or credentials
-   */
 /**
- * Login to Instagram using username and password only
+ * Login to Instagram using session cookies or credentials
  */
 async login(username, password) {
+  logger.info('🔑 Initializing Instagram client...');
+
+  this.client = new Client({
+    disableReplyPrefix: config.instagram.disableReplyPrefix || false,
+  });
+
+  this.setupEventHandlers();
+
+  const sessionFile = path.resolve(`${username}.json`); // session file in root dir
+  let loggedIn = false;
+
   try {
-    logger.info('🔑 Initializing Instagram client...');
+    if (fs.existsSync(sessionFile)) {
+      logger.info('🍪 Session file found — trying login via cookie...');
+      const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+      await this.client.state.deserialize(sessionData);
+      await this.client.simulate.preLoginFlow();
+      await this.client.account.currentUser(); // validate session
+      await this.client.simulate.postLoginFlow();
 
-    // Create client instance
-    this.client = new Client({
-      disableReplyPrefix: config.instagram.disableReplyPrefix || false
-    });
-
-    // Setup event handlers before login
-    this.setupEventHandlers();
-
-    // Always login with username & password
-    await this.client.login(username, password);
-
-    this.ready = true;
-    this.running = true;
-
-    logger.info(`✅ Successfully logged in as @${this.client.user.username}`);
-
-    // Initialize modules after successful login
-    await this.initializeModules();
-
-    return true;
-  } catch (error) {
-    logger.error('❌ Login failed:', error.message);
-    throw error;
+      logger.info(`✅ Logged in using session cookies as @${this.client.user.username}`);
+      loggedIn = true;
+    }
+  } catch (err) {
+    logger.warn('⚠️ Failed to login with session cookies, falling back to username/password...');
   }
+
+  if (!loggedIn) {
+    try {
+      await this.client.login(username, password);
+
+      logger.info(`✅ Logged in with credentials as @${this.client.user.username}`);
+
+      // Save session
+      fs.writeFileSync(sessionFile, JSON.stringify(await this.client.state.serialize()));
+      logger.info('💾 Session saved for future use');
+    } catch (error) {
+      logger.error('❌ Login failed:', error.message);
+      throw error;
+    }
+  }
+
+  this.ready = true;
+  this.running = true;
+
+  await this.initializeModules();
+  return true;
 }
 
 
