@@ -1,4 +1,5 @@
-const { EventEmitter } = require('events')
+import { EventEmitter } from 'events';
+
 
 /**
  * Collects messages in a chat
@@ -83,7 +84,7 @@ class MessageCollector extends EventEmitter {
     }
 }
 
-module.exports = MessageCollector
+export default MessageCollector;
 
 /**
  * Emitted when a message is collected by the collector
