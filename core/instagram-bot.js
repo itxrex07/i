@@ -4,6 +4,9 @@ import { config } from '../config.js';
 import fs from 'fs';
 import path from 'path';
 import { readFileSync } from 'fs';
+import { CookieJar } from 'tough-cookie'; // add this import
+
+
 /**
  * Instagram Bot using original insta.js framework
  */
@@ -32,25 +35,30 @@ async login(username, password) {
 
   this.setupEventHandlers();
 
-  const sessionFile = path.resolve(`${username}.session.json`);
- // session file in root dir
-  let loggedIn = false;
+const sessionFile = path.resolve(`${username}.session.json`);
+let loggedIn = false;
 
-  try {
-    if (fs.existsSync(sessionFile)) {
-      logger.info('🍪 Session file found — trying login via cookie...');
-      const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
-      await this.client.state.deserialize(sessionData);
-      await this.client.simulate.preLoginFlow();
-      await this.client.account.currentUser(); // validate session
-      await this.client.simulate.postLoginFlow();
+try {
+  if (fs.existsSync(sessionFile)) {
+    logger.info('🍪 Session file found — injecting raw cookies...');
+    const rawCookies = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
 
-      logger.info(`✅ Logged in using session cookies as @${this.client.user.username}`);
-      loggedIn = true;
+    const cookieJar = this.client.state.cookieJar;
+    for (const cookie of rawCookies) {
+      const cookieStr = `${cookie.name}=${cookie.value}`;
+      await cookieJar.setCookie(cookieStr, `https://instagram.com`, { http: true });
     }
-  } catch (err) {
-    logger.warn('⚠️ Failed to login with session cookies, falling back to username/password...');
+
+    await this.client.simulate.preLoginFlow();
+    await this.client.account.currentUser(); // validate session
+    await this.client.simulate.postLoginFlow();
+
+    logger.info(`✅ Logged in using session cookies as @${this.client.user.username}`);
+    loggedIn = true;
   }
+} catch (err) {
+  logger.warn('⚠️ Failed to login with session cookies, falling back to username/password...');
+}
 
   if (!loggedIn) {
     try {
