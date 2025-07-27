@@ -353,138 +353,73 @@ class Client extends EventEmitter {
      * @param {object} [state] Optional state object. 
      */
  */
-async login(username, password, state) {
-    console.log('DEBUG insta.js: Starting login process...');
-    const ig = withFbnsAndRealtime(new IgApiClient());
-    console.log('DEBUG insta.js: IgApiClient created.');
-    ig.state.generateDevice(username);
-    console.log('DEBUG insta.js: Device generated.');
+    async login (username,password,state) {
+        const ig = withFbnsAndRealtime(new IgApiClient())
+        ig.state.generateDevice(username)
+        
 
-    let loginResponse;
-    try {
-        console.log('DEBUG insta.js: Attempting ig.account.login...');
-        loginResponse = await ig.account.login(username, password);
-        console.log('DEBUG insta.js: ig.account.login successful.', loginResponse ? '(Login response received)' : '(No login response object)');
-    } catch (loginErr) {
-        console.error('DEBUG insta.js: ig.account.login failed:', loginErr.message);
-        throw new Error(`Instagram API login failed: ${loginErr.message}`);
-    }
+       
 
-    let usernameInfoResponse;
-    let userInfoData;
-    try {
-        console.log('DEBUG insta.js: Fetching user info (usernameinfo)...');
-        usernameInfoResponse = await ig.user.usernameinfo(username);
-        console.log('DEBUG insta.js: usernameinfo successful.');
-        console.log('DEBUG insta.js: Fetching user info (info)...');
-        userInfoData = await ig.user.info(usernameInfoResponse.pk);
-        console.log('DEBUG insta.js: user info fetch successful.');
-    } catch (userErr) {
-        console.error('DEBUG insta.js: User info fetch failed:', userErr.message);
-        throw new Error(`Failed to fetch user information after login: ${userErr.message}`);
-    }
-
-    try {
-        console.log('DEBUG insta.js: Creating ClientUser object...');
-        // Ensure both usernameInfoResponse and userInfoData are used correctly
-        this.user = new ClientUser(this, {
-            ...usernameInfoResponse, // Use the correct variable name
-            ...userInfoData          // Use the correct variable name
-        });
-        this.cache.users.set(this.user.id, this.user);
-        this.emit('debug', 'logged', this.user);
-        console.log('DEBUG insta.js: ClientUser created and cached.');
-    } catch (userCreateErr) {
-        console.error('DEBUG insta.js: ClientUser creation failed:', userCreateErr.message);
-        // Log the variables to help debug
-        console.error('DEBUG insta.js: usernameInfoResponse type:', typeof usernameInfoResponse);
-        console.error('DEBUG insta.js: userInfoData type:', typeof userInfoData);
-        throw new Error(`Failed to create local user object: ${userCreateErr.message}`);
-    }
-
-    // --- Checkpoint: Login seemed successful up to here ---
-    try {
-        console.log('DEBUG insta.js: Checking sessionid cookie existence...');
-        const sessionid = await ig.state.extractCookieValue('sessionid');
-        if (!sessionid) {
-             console.error('DEBUG insta.js: sessionid cookie NOT found in state after user setup!');
-             throw new Error('Login process completed internally, but sessionid cookie is missing from state before thread loading.');
-        } else {
-             console.log('DEBUG insta.js: sessionid cookie found, value starts with:', sessionid.substring(0, 10) + '...');
-        }
-    } catch (cookieCheckErr) {
-         console.error('DEBUG insta.js: Error checking sessionid cookie:', cookieCheckErr.message);
-         throw cookieCheckErr;
-    }
-    // --- End Checkpoint ---
-
-    try {
-        console.log('DEBUG insta.js: Loading initial threads...');
+        
+           
+            
+            await ig.account.login(username,password);
+            
+            const response = await ig.user.usernameinfo(username)
+            //console.log(response)
+            //console.log(response.pk)
+            const userData = await ig.user.info(response.pk)
+            this.user = new ClientUser(this, {
+                ...response,
+                ...userData
+            })
+            this.cache.users.set(this.user.id, this.user)
+            this.emit('debug', 'logged', this.user)
+            
+            const checkUser = await ig.user.usernameinfo(username)
+            
+         
+ 
         const threads = [
             ...await ig.feed.directInbox().items(),
             ...await ig.feed.directPending().items()
-        ];
-        console.log(`DEBUG insta.js: Loaded ${threads.length} threads.`);
+        ]
         threads.forEach((thread) => {
-            const chat = new Chat(this, thread.thread_id, thread);
-            this.cache.chats.set(thread.thread_id, chat);
+            const chat = new Chat(this, thread.thread_id, thread)
+            this.cache.chats.set(thread.thread_id, chat)
             if (chat.pending) {
-                this.cache.pendingChats.set(thread.thread_id, chat);
+                this.cache.pendingChats.set(thread.thread_id, chat)
             }
-        });
-        console.log('DEBUG insta.js: Threads loaded and cached.');
-    } catch (threadErr) {
-        console.warn('DEBUG insta.js: Warning - Failed to load initial threads (continuing):', threadErr.message);
-    }
-
-    try {
-        console.log('DEBUG insta.js: Setting up realtime and fbns...');
-        // Fix the event listener syntax
-        ig.realtime.on('receive', (topic, messages) => this.handleRealtimeReceive(topic, messages));
-        ig.realtime.on('error', (error) => { // Correct syntax for error listener
-            console.error('Realtime error:', error);
-        });
-        ig.realtime.on('close', () => { // Correct syntax for close listener
-            console.warn('RealtimeClient closed');
-        });
+        })
+        ig.realtime.on('receive', (topic, messages) => this.handleRealtimeReceive(topic, messages))
+        ig.realtime.on('error', ig.realtime.connect,console.error )
+        ig.realtime.on('close', () => console.error('RealtimeClient closed'))
 
         await ig.realtime.connect({
             autoReconnect: true,
             irisData: await ig.feed.directInbox().request()
-        });
-        console.log('DEBUG insta.js: Realtime connected.');
+        })
 
-        // Fix the subscribe syntax
-        ig.fbns.push$.subscribe({
-            next: (data) => this.handleFbnsReceive(data),
-            error: (err) => console.error('FBNS error:', err),
-            complete: () => console.log('FBNS stream completed')
-        });
+        ig.fbns.push$.subscribe((data) => this.handleFbnsReceive(data))
+
         await ig.fbns.connect({
             autoReconnect: true
-        });
-        console.log('DEBUG insta.js: FBNS connected.');
-    } catch (rtFbnsErr) {
-        console.warn('DEBUG insta.js: Warning - Failed to setup realtime/FBNS (continuing):', rtFbnsErr.message);
+        })
+        // PartialObserver<FbnsNotificationUnknown>
+       
+
+        
+
+        this.ig = ig
+        this.ready = true
+        this.emit('connected')
+        this.eventsToReplay.forEach((event) => {
+            const eventType = event.shift()
+            if (eventType === 'realtime') {
+                this.handleRealtimeReceive(...event)
+            } 
+        })
     }
-
-    // --- Critical Assignment ---
-    console.log('DEBUG insta.js: Assigning internal ig client and marking ready...');
-    this.ig = ig;
-    this.ready = true;
-    this.emit('connected');
-    console.log('DEBUG insta.js: Login process completed, emitting connected.');
-
-    // Replay events if any
-    this.eventsToReplay.forEach((event) => {
-        const eventType = event.shift();
-        if (eventType === 'realtime') {
-            this.handleRealtimeReceive(...event);
-        }
-        // Add fbns replay if needed
-    });
-    console.log('DEBUG insta.js: Events replayed (if any).');
-}
 
     toJSON () {
         const json = {
