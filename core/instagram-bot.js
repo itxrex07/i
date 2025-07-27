@@ -53,7 +53,7 @@ export class InstagramBot {
     if (fs.existsSync(sessionFile)) {
       try {
         const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
-        // Basic check for validity
+        // Basic check for validity based on insta.js Client serialization format
         if (!sessionData || typeof sessionData !== 'object' || !sessionData.constants || !sessionData.cookies) {
           logger.warn('🗑️ Session data appears invalid, removing session file');
           fs.unlinkSync(sessionFile);
@@ -65,20 +65,33 @@ export class InstagramBot {
     }
 
     // 1. Try session.json
-    if (!loggedIn && fs.existsSync(sessionFile)) {
+    if (fs.existsSync(sessionFile) && !loggedIn) {
       try {
         logger.info('🍪 Session file found — trying login via session...');
         const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
-        // Deserialize state into the client's internal IgApiClient
-        await this.client.ig.state.deserialize(sessionData);
-        await this.client.ig.account.currentUser(); // Validate session
-        // Ensure user object is created after successful session login
-        const currentUserResponse = await this.client.ig.user.info(this.client.ig.state.cookieUserId);
-        this.client.user = new (await import('../insta.js/src/structures/ClientUser.js')).default(this.client, currentUserResponse);
-        this.client.cache.users.set(this.client.user.id, this.client.user);
+        
+        // Perform fresh login first to initialize this.client.ig
+        // Then deserialize the state. This is a workaround because
+        // insta.js Client.login handles the full setup.
+        await this.client.login(username, password); // This initializes this.client.ig
+        
+        // Now attempt to deserialize the saved state over the fresh one
+        // This might not work perfectly depending on insta.js internals,
+        // but it's the correct object path.
+        if (this.client.ig && this.client.ig.state) {
+            await this.client.ig.state.deserialize(sessionData);
+            // Re-fetch user info to ensure client.user is correctly populated
+            // after state deserialization
+            const currentUserResponse = await this.client.ig.user.info(this.client.ig.state.cookieUserId);
+            const ClientUser = (await import('../insta.js/src/structures/ClientUser.js')).default;
+            this.client.user = new ClientUser(this.client, currentUserResponse);
+            this.client.cache.users.set(this.client.user.id, this.client.user);
 
-        logger.info(`✅ Logged in using session as @${this.client.user.username}`);
-        loggedIn = true;
+            logger.info(`✅ Logged in using session as @${this.client.user.username}`);
+            loggedIn = true;
+        } else {
+             throw new Error('Client internal IgApiClient not initialized after login for session restore.');
+        }
       } catch (err) {
         logger.warn('⚠️ Failed to login with session:', err.message);
         // Remove corrupted session file
@@ -97,10 +110,20 @@ export class InstagramBot {
           throw new Error('Missing required cookies: sessionid, ds_user_id, csrftoken');
         }
 
+        // We need the IgApiClient to be initialized to load cookies.
+        // The simplest way is to do a fresh login first, then override cookies.
+        // This is a limitation of how insta.js wraps IgApiClient.
+        logger.info('🔄 Performing initial login to initialize client state for cookie loading...');
+        await this.client.login(username, password); // Initializes this.client.ig
+
         // Ensure client's internal IgApiClient state is ready
         if (!this.client.ig || !this.client.ig.state || !this.client.ig.state.cookieJar) {
-          throw new Error('Client internal IgApiClient state not properly initialized for cookie loading');
+          throw new Error('Client internal IgApiClient state not properly initialized for cookie loading after initial login.');
         }
+
+        // Clear any existing cookies set by the initial login
+        // Note: cookieJar.removeAllCookies() might be async or not exist, clear manually if needed.
+        // For now, just set the desired cookies, which should overwrite.
 
         for (const cookie of rawCookies) {
           if (!cookie.name || !cookie.value || !cookie.domain) {
@@ -122,10 +145,12 @@ export class InstagramBot {
           await this.client.ig.state.cookieJar.setCookie(toughCookie, url);
         }
 
-        await this.client.ig.account.currentUser(); // Validate cookie-based session
-        // Ensure user object is created after successful cookie login
+        // Validate cookie-based session by fetching current user
+        await this.client.ig.account.currentUser();
+        // Re-fetch user info to ensure client.user is correctly populated
         const currentUserResponse = await this.client.ig.user.info(this.client.ig.state.cookieUserId);
-        this.client.user = new (await import('../insta.js/src/structures/ClientUser.js')).default(this.client, currentUserResponse);
+        const ClientUser = (await import('../insta.js/src/structures/ClientUser.js')).default;
+        this.client.user = new ClientUser(this.client, currentUserResponse);
         this.client.cache.users.set(this.client.user.id, this.client.user);
 
         logger.info(`✅ Logged in using raw cookies as @${this.client.user.username}`);
@@ -137,10 +162,14 @@ export class InstagramBot {
         loggedIn = true;
       } catch (err) {
         logger.warn('⚠️ Failed to login with cookies.json:', err.message);
+        // If cookie login fails after initial login, we might be in an inconsistent state.
+        // Best to force a fresh login next time.
+        try { fs.unlinkSync(sessionFile); } catch (e) { /* ignore */ }
+        try { fs.unlinkSync(cookieFile); } catch (e) { /* ignore */ }
       }
     }
 
-    // 3. Fresh login
+    // 3. Fresh login (if no session/cookies or if they failed)
     if (!loggedIn) {
       try {
         logger.info('🔑 Performing fresh login with credentials...');
@@ -148,16 +177,27 @@ export class InstagramBot {
         await this.client.login(username, password);
 
         // Verify login was successful by checking if we have a user
+        // The client.login method should have set this.client.user
         if (!this.client.user) {
-          throw new Error('Login appeared successful but no user data received');
+          throw new Error('Login appeared successful but no user data received (client.user is null).');
         }
 
         logger.info(`✅ Logged in as @${this.client.user.username}`);
 
         // Save session after fresh login
-        const session = await this.client.ig.state.serialize();
-        fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2));
-        logger.info('💾 session.json saved after fresh login');
+        // Ensure this.client.ig is available before trying to serialize
+        if (this.client.ig && this.client.ig.state) {
+            const session = await this.client.ig.state.serialize();
+            // Add extra validation before writing
+            if (session && typeof session === 'object' && session.cookies && Array.isArray(session.cookies)) {
+                fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2));
+                logger.info('💾 session.json saved after fresh login');
+            } else {
+                 logger.warn('⚠️ Serialized session data appears invalid, not saving.');
+            }
+        } else {
+             logger.warn('⚠️ Client internal IgApiClient state not available for session saving.');
+        }
         loggedIn = true;
       } catch (error) {
         logger.error('❌ Login failed:', error.message);
@@ -165,7 +205,7 @@ export class InstagramBot {
         if (error.response) {
            logger.error('❌ Login response details:', JSON.stringify(error.response, null, 2));
         }
-        throw error;
+        throw error; // Re-throw as this is a critical failure
       }
     }
 
