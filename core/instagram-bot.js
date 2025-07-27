@@ -3,7 +3,7 @@ import { logger } from '../utils/utils.js';
 import { config } from '../config.js';
 import fs from 'fs';
 import path from 'path';
-
+import { readFileSync } from 'fs';
 /**
  * Instagram Bot using original insta.js framework
  */
@@ -36,7 +36,8 @@ export class InstagramBot {
       this.setupEventHandlers();
 
       // Try to login (insta.js will handle cookies automatically)
-      await this.client.login(username, password);
+      const session = JSON.parse(readFileSync('./session.json', 'utf-8'));
+await this.client.loginWithSession(session);
 
       this.ready = true;
       this.running = true;
