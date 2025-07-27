@@ -19,11 +19,6 @@ export class MessageHandler {
         return;
       }
 
-      // Forward to Telegram if enabled
-      if (this.telegramBridge?.enabled && config.telegram.enabled) {
-        await this.telegramBridge.forwardMessage(message);
-      }
-
     } catch (error) {
       logger.error('Message handling error:', error.message);
     }
@@ -38,7 +33,7 @@ export class MessageHandler {
 
     // Admin check
     if (command.adminOnly && !this.isAdmin(message.author?.username)) {
-      await this.instagramBot.sendMessage(message.chatId, '❌ Admin only');
+      await message.reply('❌ Admin only');
       return;
     }
 
@@ -51,7 +46,7 @@ export class MessageHandler {
       
     } catch (error) {
       logger.error(`Command ${commandName} error:`, error.message);
-      await this.instagramBot.sendMessage(message.chatId, `❌ Error: ${error.message}`);
+      await message.reply(`❌ Error: ${error.message}`);
     }
   }
 

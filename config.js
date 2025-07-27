@@ -5,7 +5,10 @@ export const config = {
     sessionPath: './session/session.json',
     messageCheckInterval: 5000, // Check for messages every 5 seconds
     maxRetries: 3,
-    useMongoSession: true // Set to false to use file-based sessions
+    useMongoSession: true, // Set to false to use file-based sessions
+    disableReplyPrefix: false, // Whether to disable @ mentions in replies
+    autoApprovePending: true, // Auto-approve pending message requests
+    autoApproveFollowRequests: false // Auto-approve follow requests
   },
   
   telegram: {
@@ -15,7 +18,8 @@ export const config = {
     enabled: true,
     adminPassword: '1122',   
     forwardMessages: true,
-    forwardMedia: true
+    forwardMedia: true,
+    autoApprovePending: true // Control auto-approval via Telegram
   },
   
   mongo: {

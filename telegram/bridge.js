@@ -5,12 +5,13 @@ export class TelegramBridge {
   constructor(telegramBot, instagramBot) {
     this.telegramBot = telegramBot;
     this.instagramBot = instagramBot;
-    this.enabled = false;
+    this.enabled = config.telegram.enabled || false;
     this.chatMappings = new Map(); // Instagram chat ID -> Telegram topic ID
     this.topicMappings = new Map(); // Telegram topic ID -> Instagram chat ID
     this.bridgeGroupId = config.telegram.bridgeGroupId;
     this.messageQueue = [];
     this.processing = false;
+    this.autoApprove = config.telegram.autoApprovePending || false;
   }
 
   async initialize() {
@@ -25,7 +26,6 @@ export class TelegramBridge {
       logger.info(`✅ Bridge initialized with group: ${chat.title}`);
       
       this.setupEventHandlers();
-      this.enabled = true;
       return true;
     } catch (error) {
       logger.error('❌ Failed to initialize bridge:', error.message);
@@ -34,41 +34,35 @@ export class TelegramBridge {
   }
 
   setupEventHandlers() {
-    // Handle Instagram messages
-    if (this.instagramBot) {
-      this.instagramBot.on('messageCreate', async (message) => {
-        if (this.enabled && !message.fromBot) {
-          await this.forwardToTelegram(message);
-        }
-      });
-    }
-
     // Handle Telegram messages from bridge group
     if (this.telegramBot?.bot) {
       this.telegramBot.bot.on('message', async (msg) => {
-        if (this.enabled && msg.chat.id === this.bridgeGroupId && msg.message_thread_id) {
+        if (this.enabled && msg.chat.id == this.bridgeGroupId && msg.message_thread_id) {
           await this.forwardToInstagram(msg);
         }
       });
     }
   }
 
-  async forwardToTelegram(instagramMessage) {
+  async forwardToTelegram(message) {
     try {
-      const chatId = instagramMessage.chatId;
+      if (!this.enabled || !config.telegram.forwardMessages) return;
+      if (message.fromBot) return; // Don't forward bot's own messages
+      
+      const chatId = message.chatID;
       let topicId = this.chatMappings.get(chatId);
 
       // Create topic if doesn't exist
       if (!topicId) {
-        topicId = await this.createTopicForChat(instagramMessage.chat);
+        topicId = await this.createTopicForChat(message.chat);
         if (!topicId) return;
       }
 
       // Format message for Telegram
-      const formattedMessage = await this.formatInstagramMessage(instagramMessage);
+      const formattedMessage = await this.formatInstagramMessage(message);
       
       // Send to Telegram topic
-      await this.sendToTelegramTopic(topicId, formattedMessage, instagramMessage);
+      await this.sendToTelegramTopic(topicId, formattedMessage, message);
       
       logger.debug(`📤 Forwarded Instagram message to Telegram topic ${topicId}`);
     } catch (error) {
@@ -89,7 +83,7 @@ export class TelegramBridge {
       // Skip messages from the bot itself
       if (telegramMessage.from.is_bot) return;
 
-      const instagramChat = this.instagramBot.cache.chats.get(instagramChatId);
+      const instagramChat = this.instagramBot.client.cache.chats.get(instagramChatId);
       if (!instagramChat) {
         logger.warn(`⚠️ Instagram chat ${instagramChatId} not found`);
         return;
@@ -104,6 +98,57 @@ export class TelegramBridge {
     }
   }
 
+  async notifyPendingRequest(chat, action) {
+    try {
+      if (!this.enabled) return;
+      
+      const recipient = chat.users.first();
+      const message = action === 'approved' 
+        ? `✅ **Auto-approved pending request**\n\n👤 From: @${recipient?.username || 'Unknown'}\n🆔 Chat ID: \`${chat.id}\``
+        : `📬 **New pending request**\n\n👤 From: @${recipient?.username || 'Unknown'}\n🆔 Chat ID: \`${chat.id}\`\n\n${this.autoApprove ? '⏳ Will auto-approve...' : '⚠️ Requires manual approval'}`;
+      
+      await this.telegramBot.bot.sendMessage(
+        this.bridgeGroupId,
+        message,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      logger.error('❌ Failed to notify pending request:', error.message);
+    }
+  }
+
+  async notifyNewFollower(user) {
+    try {
+      if (!this.enabled) return;
+      
+      const message = `👤 **New Follower**\n\n@${user.username}\n${user.fullName ? `📝 ${user.fullName}\n` : ''}🆔 ID: \`${user.id}\``;
+      
+      await this.telegramBot.bot.sendMessage(
+        this.bridgeGroupId,
+        message,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      logger.error('❌ Failed to notify new follower:', error.message);
+    }
+  }
+
+  async notifyFollowRequest(user) {
+    try {
+      if (!this.enabled) return;
+      
+      const message = `👤 **Follow Request**\n\n@${user.username}\n${user.fullName ? `📝 ${user.fullName}\n` : ''}🆔 ID: \`${user.id}\``;
+      
+      await this.telegramBot.bot.sendMessage(
+        this.bridgeGroupId,
+        message,
+        { parse_mode: 'Markdown' }
+      );
+    } catch (error) {
+      logger.error('❌ Failed to notify follow request:', error.message);
+    }
+  }
+
   async createTopicForChat(instagramChat) {
     try {
       // Generate topic name
@@ -111,7 +156,7 @@ export class TelegramBridge {
       if (instagramChat.isGroup) {
         topicName = instagramChat.name || `Group ${instagramChat.id.slice(-6)}`;
       } else {
-        const recipient = instagramChat.recipient;
+        const recipient = instagramChat.users.find(u => u.id !== this.instagramBot.client.user.id);
         topicName = recipient ? `@${recipient.username}` : `DM ${instagramChat.id.slice(-6)}`;
       }
 
@@ -154,7 +199,7 @@ export class TelegramBridge {
       message += `📱 **Instagram Group**: ${instagramChat.name || 'Unnamed Group'}\n`;
       message += `👥 **Members**: ${instagramChat.users.size}\n`;
     } else {
-      const recipient = instagramChat.recipient;
+      const recipient = instagramChat.users.find(u => u.id !== this.instagramBot.client.user.id);
       message += `📱 **Instagram DM**: ${recipient ? `@${recipient.username}` : 'Unknown User'}\n`;
       if (recipient?.fullName) {
         message += `👤 **Name**: ${recipient.fullName}\n`;
@@ -184,7 +229,7 @@ export class TelegramBridge {
         
       case 'media':
         if (message.mediaData) {
-          formatted += `📸 **${message.mediaData.type.toUpperCase()}**`;
+          formatted += `📸 **MEDIA**`;
           if (message.content) {
             formatted += `\n${message.content}`;
           }
@@ -235,12 +280,12 @@ export class TelegramBridge {
       );
 
       // Handle media attachments
-      if (originalMessage.hasMedia && originalMessage.mediaData) {
+      if (originalMessage.mediaData && config.telegram.forwardMedia) {
         await this.forwardMediaToTelegram(topicId, originalMessage);
       }
 
       // Handle voice messages
-      if (originalMessage.isVoice && originalMessage.voiceData) {
+      if (originalMessage.voiceData && config.telegram.forwardMedia) {
         await this.forwardVoiceToTelegram(topicId, originalMessage);
       }
 
@@ -254,31 +299,13 @@ export class TelegramBridge {
     try {
       const mediaData = message.mediaData;
       
-      if (mediaData.type === 'photo') {
+      if (mediaData.url) {
         await this.telegramBot.bot.sendPhoto(
           this.bridgeGroupId,
           mediaData.url,
           {
             message_thread_id: topicId,
             caption: '📸 From Instagram'
-          }
-        );
-      } else if (mediaData.type === 'video') {
-        await this.telegramBot.bot.sendVideo(
-          this.bridgeGroupId,
-          mediaData.url,
-          {
-            message_thread_id: topicId,
-            caption: '🎥 From Instagram'
-          }
-        );
-      } else if (mediaData.type === 'animated') {
-        await this.telegramBot.bot.sendAnimation(
-          this.bridgeGroupId,
-          mediaData.url,
-          {
-            message_thread_id: topicId,
-            caption: '🎭 From Instagram'
           }
         );
       }
@@ -291,15 +318,17 @@ export class TelegramBridge {
     try {
       const voiceData = message.voiceData;
       
-      await this.telegramBot.bot.sendVoice(
-        this.bridgeGroupId,
-        voiceData.url,
-        {
-          message_thread_id: topicId,
-          caption: '🎤 Voice message from Instagram',
-          duration: voiceData.duration
-        }
-      );
+      if (voiceData.sourceURL) {
+        await this.telegramBot.bot.sendVoice(
+          this.bridgeGroupId,
+          voiceData.sourceURL,
+          {
+            message_thread_id: topicId,
+            caption: '🎤 Voice message from Instagram',
+            duration: voiceData.duration
+          }
+        );
+      }
     } catch (error) {
       logger.error('❌ Failed to forward voice:', error.message);
     }

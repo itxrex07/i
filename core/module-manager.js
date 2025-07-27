@@ -9,6 +9,13 @@ export class ModuleManager {
     this.instagramBot = instagramBot;
     this.modulesPath = './modules';
   }
+
+  async init() {
+    const { Collection } = await import('../structures/Collection.js');
+    this.commandRegistry = new Collection();
+    await this.loadModules();
+  }
+
   async loadModules() {
     try {
       const moduleFiles = fs.readdirSync(this.modulesPath)
@@ -101,11 +108,6 @@ export class ModuleManager {
     }
     return message;
   }
-async init() {
-  const { Collection } = await import('../structures/Collection.js');
-  this.commandRegistry = new Collection();
-  await this.loadModules();
-}
 
   async cleanup() {
     for (const module of this.modules) {

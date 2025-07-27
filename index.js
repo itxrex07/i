@@ -1,4 +1,6 @@
-import { InstagramBot } from './core/bot.js';
+import { InstagramBot } from './core/instagram-bot.js';
+import { TelegramBotManager } from './telegram/bot.js';
+import { TelegramBridge } from './telegram/bridge.js';
 import { logger } from './utils/utils.js';
 import { config } from './config.js';
 
@@ -8,6 +10,8 @@ class HyperInsta {
   constructor() {
     this.startTime = new Date();
     this.instagramBot = new InstagramBot();
+    this.telegramBot = null;
+    this.telegramBridge = null;
   }
 
   async initialize() {
@@ -25,6 +29,24 @@ class HyperInsta {
 
       // ✅ Login first
       await this.instagramBot.login(username, password);
+
+      // Initialize Telegram bot if enabled
+      if (config.telegram.enabled) {
+        console.log('🤖 Initializing Telegram bot...');
+        this.telegramBot = new TelegramBotManager(this.instagramBot);
+        const telegramInitialized = await this.telegramBot.initialize();
+        
+        if (telegramInitialized) {
+          // Initialize Telegram bridge
+          this.telegramBridge = new TelegramBridge(this.telegramBot, this.instagramBot);
+          await this.telegramBridge.initialize();
+          
+          // Set bridge in Instagram bot
+          this.instagramBot.setTelegramBridge(this.telegramBridge);
+          
+          console.log('✅ Telegram integration initialized');
+        }
+      }
 
       // ✅ Then show status
       this.showLiveStatus();
@@ -58,6 +80,8 @@ class HyperInsta {
 ║    🚀 HYPER INSTA - LIVE & OPERATIONAL                     ║
 ║                                                              ║
 ║    ✅ Instagram: Connected & Active                         ║
+║    ${this.telegramBot ? '✅ Telegram: Connected & Active' : '❌ Telegram: Disabled'}                          ║
+║    ${this.telegramBridge ? '✅ Bridge: Active' : '❌ Bridge: Disabled'}                                ║
 ║    📦 Modules: ${stats.modules} loaded                                      ║
 ║    ⚡ Commands: ${stats.commands} available                              ║
 ║    ⚡ Startup Time: ${Math.round(uptime)}ms                                  ║
@@ -69,6 +93,7 @@ class HyperInsta {
 
 🔥 Bot is running at MAXIMUM PERFORMANCE!
 💡 Type .help in Instagram to see all commands
+${this.telegramBot ? '📱 Telegram bot is active for remote control' : ''}
     `);
   }
 

@@ -68,7 +68,7 @@ export class CoreModule {
 
   async handlePing(args, message) {
     const start = Date.now();
-    const sentMessage = await this.sendReply(message, '🏓 Pong!');
+    await this.sendReply(message, '🏓 Pong!');
     const ping = Date.now() - start;
     await this.sendReply(message, `⚡ Response time: ${ping}ms`);
   }
@@ -88,8 +88,7 @@ export class CoreModule {
   }
 
   async handleStats(args, message) {
-    const client = this.getClient();
-    const stats = client.getStats();
+    const stats = this.instagramBot.getStats();
     const uptime = this.getUptime();
     const memUsage = Math.round(process.memoryUsage().heapUsed / 1024 / 1024);
     
@@ -144,11 +143,7 @@ export class CoreModule {
 
   async sendReply(message, text) {
     this.commandCount++;
-    return await this.instagramBot.sendMessage(message.chatId, text);
-  }
-
-  getClient() {
-    return this.instagramBot.client || this.instagramBot;
+    return await message.reply(text);
   }
 
   getUptime() {
