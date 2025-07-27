@@ -1,8 +1,9 @@
-const getUrls = require('get-urls')
-const Collection = require('@discordjs/collection')
-const Util = require('../utils/Util')
-const Message = require('./Message')
-const Attachment = require('./Attachment')
+import getUrls from 'get-urls';
+import Collection from '@discordjs/collection';
+import Util from '../utils/Util.js';
+import Message from './Message.js';
+import Attachment from './Attachment.js';
+
 
 /**
  * Represents a chat between one or more users.
@@ -298,4 +299,4 @@ class Chat {
     }
 }
 
-module.exports = Chat
+export default Chat;
