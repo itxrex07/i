@@ -4,7 +4,6 @@ import { IgApiClient } from 'instagram-private-api';
 import { EventEmitter } from 'events';
 import { Collection } from '@discordjs/collection';
 
-
 import Util from '../utils/Util.js';
 import { existsSync, readFileSync, unlinkSync, writeFileSync, mkdirSync } from 'fs';
 import ClientUser from './ClientUser.js';
@@ -347,6 +346,15 @@ class Client extends EventEmitter {
         await this.ig.fbns.disconnect();
     }
     
+async loginWithSession(sessionData) {
+  await this.ig.state.deserialize(sessionData);
+  await this.ig.simulate.preLoginFlow();
+  await this.ig.account.currentUser(); // confirm session works
+  await this.ig.simulate.postLoginFlow();
+  this.user = await this.fetchSelfUser();
+  this.emit('connected');
+}
+
     /**
      * Log the bot in to Instagram
      * @param {string} username The username of the Instagram account.
