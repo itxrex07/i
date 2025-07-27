@@ -346,7 +346,6 @@ class Client extends EventEmitter {
         await this.ig.fbns.disconnect();
     }
     
-
 /**
  * Log the bot in to Instagram
  * @param {string} username The username of the Instagram account.
