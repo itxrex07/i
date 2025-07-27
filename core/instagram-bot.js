@@ -1,3 +1,4 @@
+// core/instagram-bot.js
 import { Client } from '../insta.js/src/index.js';
 import { logger } from '../utils/utils.js';
 import { config } from '../config.js';
@@ -10,7 +11,7 @@ import tough from 'tough-cookie';
  */
 function hasRequiredCookies(rawCookies) {
   const required = ['sessionid', 'ds_user_id', 'csrftoken'];
-  return required.every(name => 
+  return required.every(name =>
     rawCookies.some(c => c.name === name && c.value)
   );
 }
@@ -20,9 +21,7 @@ function hasRequiredCookies(rawCookies) {
  */
 export class InstagramBot {
   constructor() {
-    this.client = new Client({
-      disableReplyPrefix: config.instagram.disableReplyPrefix || false,
-    });
+    this.client = null;
     this.ready = false;
     this.running = false;
     this.startTime = new Date();
@@ -38,9 +37,13 @@ export class InstagramBot {
    */
   async login(username, password) {
     logger.info('🔑 Initializing Instagram client...');
-    
-    // Setup event handlers after client is initialized
-    this.setupEventHandlers();
+
+    // Initialize client here to ensure it's fresh for each login attempt
+    this.client = new Client({
+      disableReplyPrefix: config.instagram.disableReplyPrefix || false,
+    });
+
+    this.setupEventHandlers(); // Setup after client is initialized
 
     const sessionFile = path.resolve(`${username}.session.json`);
     const cookieFile = path.resolve(`${username}.cookies.json`);
@@ -50,8 +53,9 @@ export class InstagramBot {
     if (fs.existsSync(sessionFile)) {
       try {
         const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
-        if (!sessionData.cookies || !sessionData.cookies.length) {
-          logger.warn('🗑️ Removing empty/corrupted session file');
+        // Basic check for validity
+        if (!sessionData || typeof sessionData !== 'object' || !sessionData.constants || !sessionData.cookies) {
+          logger.warn('🗑️ Session data appears invalid, removing session file');
           fs.unlinkSync(sessionFile);
         }
       } catch (e) {
@@ -61,18 +65,24 @@ export class InstagramBot {
     }
 
     // 1. Try session.json
-    if (fs.existsSync(sessionFile)) {
+    if (!loggedIn && fs.existsSync(sessionFile)) {
       try {
-        logger.info('🍪 Session file found — trying login via cookie...');
+        logger.info('🍪 Session file found — trying login via session...');
         const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
-        await this.client.state.deserialize(sessionData);
-        await this.client.account.currentUser(); // Validate session
-        logger.info(`✅ Logged in using session cookies as @${this.client.user.username}`);
+        // Deserialize state into the client's internal IgApiClient
+        await this.client.ig.state.deserialize(sessionData);
+        await this.client.ig.account.currentUser(); // Validate session
+        // Ensure user object is created after successful session login
+        const currentUserResponse = await this.client.ig.user.info(this.client.ig.state.cookieUserId);
+        this.client.user = new (await import('../insta.js/src/structures/ClientUser.js')).default(this.client, currentUserResponse);
+        this.client.cache.users.set(this.client.user.id, this.client.user);
+
+        logger.info(`✅ Logged in using session as @${this.client.user.username}`);
         loggedIn = true;
       } catch (err) {
-        logger.warn('⚠️ Failed to login with session cookies:', err.message);
+        logger.warn('⚠️ Failed to login with session:', err.message);
         // Remove corrupted session file
-        try { fs.unlinkSync(sessionFile); } catch (e) {}
+        try { fs.unlinkSync(sessionFile); } catch (e) { logger.warn('⚠️ Could not remove session file'); }
       }
     }
 
@@ -85,6 +95,11 @@ export class InstagramBot {
         // Validate required cookies exist
         if (!hasRequiredCookies(rawCookies)) {
           throw new Error('Missing required cookies: sessionid, ds_user_id, csrftoken');
+        }
+
+        // Ensure client's internal IgApiClient state is ready
+        if (!this.client.ig || !this.client.ig.state || !this.client.ig.state.cookieJar) {
+          throw new Error('Client internal IgApiClient state not properly initialized for cookie loading');
         }
 
         for (const cookie of rawCookies) {
@@ -104,14 +119,19 @@ export class InstagramBot {
           });
 
           const url = `https://${toughCookie.domain}${toughCookie.path}`;
-          await this.client.state.cookieJar.setCookie(toughCookie, url);
+          await this.client.ig.state.cookieJar.setCookie(toughCookie, url);
         }
 
-        await this.client.account.currentUser(); // Validate cookie-based session
+        await this.client.ig.account.currentUser(); // Validate cookie-based session
+        // Ensure user object is created after successful cookie login
+        const currentUserResponse = await this.client.ig.user.info(this.client.ig.state.cookieUserId);
+        this.client.user = new (await import('../insta.js/src/structures/ClientUser.js')).default(this.client, currentUserResponse);
+        this.client.cache.users.set(this.client.user.id, this.client.user);
+
         logger.info(`✅ Logged in using raw cookies as @${this.client.user.username}`);
 
-        // Save session from cookies
-        const session = await this.client.state.serialize();
+        // Save session from cookies for future use
+        const session = await this.client.ig.state.serialize();
         fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2));
         logger.info('💾 session.json saved from cookie-based login');
         loggedIn = true;
@@ -124,42 +144,57 @@ export class InstagramBot {
     if (!loggedIn) {
       try {
         logger.info('🔑 Performing fresh login with credentials...');
+        // The insta.js login method handles most of the setup
         await this.client.login(username, password);
-        
-        // Check if sessionid exists
-        const sessionid = await this.client.state.extractCookieValue('sessionid');
-        if (!sessionid) {
-          throw new Error('Login succeeded but sessionid cookie missing');
+
+        // Verify login was successful by checking if we have a user
+        if (!this.client.user) {
+          throw new Error('Login appeared successful but no user data received');
         }
 
         logger.info(`✅ Logged in as @${this.client.user.username}`);
 
-        const session = await this.client.state.serialize();
+        // Save session after fresh login
+        const session = await this.client.ig.state.serialize();
         fs.writeFileSync(sessionFile, JSON.stringify(session, null, 2));
         logger.info('💾 session.json saved after fresh login');
         loggedIn = true;
       } catch (error) {
         logger.error('❌ Login failed:', error.message);
+        // Log more details if available
+        if (error.response) {
+           logger.error('❌ Login response details:', JSON.stringify(error.response, null, 2));
+        }
         throw error;
       }
     }
 
-    this.ready = true;
-    this.running = true;
-    await this.initializeModules();
-    return true;
+    if (loggedIn) {
+        this.ready = true;
+        this.running = true;
+        await this.initializeModules();
+        return true;
+    } else {
+        throw new Error('Unable to login using any method');
+    }
   }
+
 
   /**
    * Setup event handlers for the client
    */
   setupEventHandlers() {
+    if (!this.client) {
+      logger.error('❌ Cannot setup event handlers: client not initialized');
+      return;
+    }
+
     // Message events
     this.client.on('messageCreate', async (message) => {
       try {
         this.messageCount++;
         logger.debug(`📨 New message from @${message.author?.username}: ${message.content || '[Media]'}`);
-        
+
         // Handle through message handler
         if (this.messageHandler) {
           await this.messageHandler.handleMessage(message);
@@ -178,12 +213,12 @@ export class InstagramBot {
     this.client.on('pendingRequest', async (chat) => {
       try {
         logger.info(`📬 New pending request from: ${chat.name || chat.id}`);
-        
+
         // Auto-approve if enabled in config
         if (config.instagram.autoApprovePending) {
           await chat.approve();
           logger.info(`✅ Auto-approved pending request: ${chat.id}`);
-          
+
           // Notify via Telegram if bridge is enabled
           if (this.telegramBridge) {
             await this.telegramBridge.notifyPendingRequest(chat, 'approved');
@@ -200,7 +235,7 @@ export class InstagramBot {
     // New follower events
     this.client.on('newFollower', async (user) => {
       logger.info(`👤 New follower: @${user.username}`);
-      
+
       if (this.telegramBridge) {
         await this.telegramBridge.notifyNewFollower(user);
       }
@@ -209,13 +244,13 @@ export class InstagramBot {
     // Follow request events
     this.client.on('followRequest', async (user) => {
       logger.info(`👤 Follow request from: @${user.username}`);
-      
+
       // Auto-approve follow requests if enabled
       if (config.instagram.autoApproveFollowRequests) {
         await user.approveFollow();
         logger.info(`✅ Auto-approved follow request from @${user.username}`);
       }
-      
+
       if (this.telegramBridge) {
         await this.telegramBridge.notifyFollowRequest(user);
       }
@@ -287,11 +322,11 @@ export class InstagramBot {
     try {
       const chat = await this.client.fetchChat(chatId);
       const message = await chat.sendPhoto(attachment);
-      
+
       if (caption) {
         await chat.sendMessage(caption);
       }
-      
+
       return message;
     } catch (error) {
       logger.error('❌ Failed to send photo:', error.message);
@@ -329,11 +364,11 @@ export class InstagramBot {
     try {
       this.running = false;
       this.ready = false;
-      
-      if (this.client) {
+
+      if (this.client && this.client.ig) {
         await this.client.logout();
       }
-      
+
       logger.info('✅ Instagram bot disconnected successfully');
     } catch (error) {
       logger.error('❌ Error during disconnect:', error.message);
