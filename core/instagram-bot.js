@@ -26,62 +26,65 @@ export class InstagramBot {
 /**
  * Login to Instagram using session cookies or credentials
  */
-async login(username, password) {
-  logger.info('🔑 Initializing Instagram client...');
+  async login(username, password) {
+    logger.info('🔑 Initializing Instagram client...');
 
-  this.client = new Client({
-    disableReplyPrefix: config.instagram.disableReplyPrefix || false,
-  });
+    this.client = new Client({
+      disableReplyPrefix: config.instagram.disableReplyPrefix || false,
+    });
 
-  this.setupEventHandlers();
+    this.setupEventHandlers();
 
-const sessionFile = path.resolve(`${username}.session.json`);
-let loggedIn = false;
+    const sessionFile = path.resolve(`${username}.session.json`);
+    let loggedIn = false;
 
-try {
-  if (fs.existsSync(sessionFile)) {
-    logger.info('🍪 Session file found — injecting raw cookies...');
-    const rawCookies = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
+    // Try session cookie login
+    if (fs.existsSync(sessionFile)) {
+      try {
+        logger.info('🍪 Session file found — trying login via cookie...');
+        const sessionData = JSON.parse(fs.readFileSync(sessionFile, 'utf8'));
 
-    const cookieJar = this.client.state.cookieJar;
-    for (const cookie of rawCookies) {
-      const cookieStr = `${cookie.name}=${cookie.value}`;
-      await cookieJar.setCookie(cookieStr, `https://instagram.com`, { http: true });
+        await this.client.state.deserialize(sessionData);
+        await this.client.simulate.preLoginFlow();
+        await this.client.account.currentUser(); // Test session
+        await this.client.simulate.postLoginFlow();
+
+        logger.info(`✅ Logged in using session cookies as @${this.client.user.username}`);
+        loggedIn = true;
+      } catch (err) {
+        logger.warn('⚠️  Failed to login with session cookies, falling back to username/password...');
+      }
     }
 
-    await this.client.simulate.preLoginFlow();
-    await this.client.account.currentUser(); // validate session
-    await this.client.simulate.postLoginFlow();
+    // Fallback to username/password
+    if (!loggedIn) {
+      try {
+        await this.client.simulate.preLoginFlow(); // Required
+        await this.client.login(username, password);
+        await this.client.simulate.postLoginFlow(); // Required
 
-    logger.info(`✅ Logged in using session cookies as @${this.client.user.username}`);
-    loggedIn = true;
-  }
-} catch (err) {
-  logger.warn('⚠️ Failed to login with session cookies, falling back to username/password...');
-}
+        logger.info(`✅ Logged in with credentials as @${this.client.user.username}`);
 
-  if (!loggedIn) {
-    try {
-      await this.client.login(username, password);
+        // Debug: print cookies
+        const cookies = await this.client.state.cookieJar.getCookies('https://instagram.com');
+        logger.info(`📦 Cookies after login: ${cookies.map(c => `${c.key}=${c.value}`).join('; ')}`);
 
-      logger.info(`✅ Logged in with credentials as @${this.client.user.username}`);
-
-      // Save session
-      fs.writeFileSync(sessionFile, JSON.stringify(await this.client.state.serialize()));
-      logger.info('💾 Session saved for future use');
-    } catch (error) {
-      logger.error('❌ Login failed:', error.message);
-      throw error;
+        // Save session
+        const serialized = await this.client.state.serialize();
+        fs.writeFileSync(sessionFile, JSON.stringify(serialized, null, 2));
+        logger.info('💾 Session saved for future use');
+      } catch (error) {
+        logger.error('❌ Login failed:', error.message);
+        throw error;
+      }
     }
-  }
 
-  this.ready = true;
-  this.running = true;
-
-  await this.initializeModules();
-  return true;
+    this.ready = true;
+    this.running = true;
+    await this.initializeModules();
+    return true;
+  
 }
-
 
   /**
    * Setup event handlers for the client
