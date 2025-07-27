@@ -1,4 +1,4 @@
-const Collection = require('@discordjs/collection')
+import Collection from '@discordjs/collection';
 
 /**
  * Represents a User
@@ -241,4 +241,4 @@ class User {
     }
 }
 
-module.exports = User
+export default User;
