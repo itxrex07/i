@@ -1,4 +1,4 @@
-const MessageCollector = require('./MessageCollector')
+import MessageCollector from './MessageCollector';
 
 /**
  * Represents a Message
@@ -234,4 +234,4 @@ class Message {
     }
 }
 
-module.exports = Message
+export default Message
